@@ -1,0 +1,27 @@
+# nginx config template for Bearer token auth.
+# Processed by nginx-alpine's envsubst: ${MCP_API_KEY} is replaced at startup.
+# nginx variables ($http_authorization, $host, etc.) are left as-is.
+#
+# Copy to docker-compose.d/nginx-apikey.conf before running make up.
+
+map $http_authorization $auth_ok {
+    "Bearer ${MCP_API_KEY}" 1;
+    default                 0;
+}
+
+server {
+    listen 80;
+
+    location / {
+        if ($auth_ok = 0) {
+            return 401;
+        }
+
+        proxy_pass         http://mcp:8080;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_buffering    off;
+    }
+}

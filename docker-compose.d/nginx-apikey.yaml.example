@@ -1,0 +1,31 @@
+# Public MCP endpoint protected by a Bearer token (nginx reverse proxy).
+#
+# Setup:
+#   1. cp docker-compose.d/nginx-apikey.yaml.example docker-compose.d/nginx-apikey.yaml
+#   2. cp docker-compose.d/nginx-apikey.conf.example docker-compose.d/nginx-apikey.conf
+#   3. Set MCP_API_KEY below (generate with: openssl rand -hex 32)
+#   4. Open port 8080 in your firewall / cloud security group
+#   5. make up
+#
+# Register in Claude Code:
+#   claude mcp add --transport http \
+#     --header "Authorization: Bearer <your-token>" \
+#     scenic-routing http://your-server:8080/
+
+services:
+  mcp-proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    environment:
+      MCP_API_KEY: "change-me-to-a-strong-random-token"
+    volumes:
+      - ./docker-compose.d/nginx-apikey.conf:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "0.0.0.0:8080:80"
+    networks:
+      - scenic
+    depends_on:
+      - mcp
+
+networks:
+  scenic:

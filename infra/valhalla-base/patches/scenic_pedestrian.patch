@@ -1,0 +1,333 @@
+diff --git a/valhalla/sif/scenic_pedestriancost.h b/valhalla/sif/scenic_pedestriancost.h
+new file mode 100644
+index 0000000..499ff32
+--- /dev/null
++++ b/valhalla/sif/scenic_pedestriancost.h
+@@ -0,0 +1,28 @@
++// Copyright (c) 2026 Maksim Dementev
++// SPDX-License-Identifier: MIT
++
++#ifndef VALHALLA_SIF_SCENIC_PEDESTRIANCOST_H_
++#define VALHALLA_SIF_SCENIC_PEDESTRIANCOST_H_
++
++#include <valhalla/baldr/rapidjson_fwd.h>
++#include <valhalla/proto/options.pb.h>
++#include <valhalla/sif/dynamiccost.h>
++
++namespace valhalla {
++namespace sif {
++
++// Parses scenic_pedestrian costing options from JSON and packs heatmap data
++// into Costing.name so it survives serialisation between Loki and Thor actors.
++void ParseScenicPedestrianCostOptions(
++    const rapidjson::Document& doc,
++    const std::string& costing_options_key,
++    Costing* pbf_costing,
++    google::protobuf::RepeatedPtrField<CodedDescription>& warnings);
++
++// Creates a ScenicPedestrianCost instance.
++cost_ptr_t CreateScenicPedestrianCost(const Costing& costing);
++
++} // namespace sif
++} // namespace valhalla
++
++#endif // VALHALLA_SIF_SCENIC_PEDESTRIANCOST_H_
+diff --git a/proto/descriptors/options.proto b/proto/descriptors/options.proto
+index 673d5af..6f25727 100644
+--- a/proto/descriptors/options.proto
++++ b/proto/descriptors/options.proto
+@@ -132,6 +132,7 @@ message Costing {
+     auto_ = 10;
+     bikeshare = 11;    // turns into pedestrian + bike
+     auto_pedestrian = 12; // turns into auto + pedestrian
++    scenic_pedestrian = 13;
+   }
+ 
+   message Options {
+diff --git a/src/proto_conversions.cc b/src/proto_conversions.cc
+index 67d5542..55b1262 100644
+--- a/src/proto_conversions.cc
++++ b/src/proto_conversions.cc
+@@ -217,6 +217,7 @@ bool Costing_Enum_Parse(const std::string& costing, Costing::Type* c) {
+       {"", Costing::none_},
+       {"bikeshare", Costing::bikeshare},
+       {"auto_pedestrian", Costing::auto_pedestrian},
++      {"scenic_pedestrian", Costing::scenic_pedestrian},
+   };
+   auto i = costings.find(costing);
+   if (i == costings.cend())
+@@ -249,6 +250,7 @@ const std::string& Costing_Enum_Name(const Costing::Type costing) {
+       {Costing::none_, "none"},
+       {Costing::bikeshare, "bikeshare"},
+       {Costing::auto_pedestrian, "auto_pedestrian"},
++      {Costing::scenic_pedestrian, "scenic_pedestrian"},
+   };
+   auto i = costings.find(costing);
+   return i == costings.cend() ? empty_str : i->second;
+diff --git a/src/sif/dynamiccost.cc b/src/sif/dynamiccost.cc
+index f98fa90..81640fb 100644
+--- a/src/sif/dynamiccost.cc
++++ b/src/sif/dynamiccost.cc
+@@ -12,6 +12,7 @@
+ #include "sif/pedestriancost.h"
+ #include "sif/transitcost.h"
+ #include "sif/truckcost.h"
++#include "sif/scenic_pedestriancost.h"
+ 
+ #include <boost/optional.hpp>
+ 
+@@ -707,6 +708,10 @@ void ParseCosting(const rapidjson::Document& doc,
+       sif::ParseNoCostOptions(doc, key, costing, warnings);
+       break;
+     }
++    case Costing::scenic_pedestrian: {
++      sif::ParseScenicPedestrianCostOptions(doc, key, costing, warnings);
++      break;
++    }
+     default: {
+       throw std::logic_error("Unknown costing");
+     }
+diff --git a/src/sif/pedestriancost.cc b/src/sif/pedestriancost.cc
+index f66b161..eecd832 100644
+--- a/src/sif/pedestriancost.cc
++++ b/src/sif/pedestriancost.cc
+@@ -932,6 +932,194 @@ void ParsePedestrianCostOptions(const rapidjson::Document& doc,
+                           warnings);
+ }
+ 
++
++// ── ScenicPedestrianCost ─────────────────────────────────────────────────────
++// Wraps PedestrianCost with a per-request heatmap discount.
++//
++// Heatmap data is packed into the Costing.name field by
++// ParseScenicPedestrianCostOptions so it survives serialisation between the
++// Loki and Thor actors (which run in separate threads and do not share TLS).
++// Format: "scenic_pedestrian\x1f<base64>\x1f<min_lat>\x1f<min_lon>\x1f<max_lat>\x1f<max_lon>\x1f<w>\x1f<h>"
++// The unit-separator (0x1F) never appears in base64, so no escaping is needed.
++namespace {
++
++std::vector<uint8_t> scenic_base64_decode(const std::string& in) {
++  static const int kT[256] = {
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
++    52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
++    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
++    15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
++    -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
++    41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
++  };
++  std::vector<uint8_t> out;
++  out.reserve(in.size() * 3 / 4);
++  uint32_t val = 0;
++  int bits = 0;
++  for (unsigned char c : in) {
++    int d = kT[c];
++    if (d < 0) continue;
++    val = (val << 6) | static_cast<uint32_t>(d);
++    bits += 6;
++    if (bits >= 8) {
++      bits -= 8;
++      out.push_back(static_cast<uint8_t>((val >> bits) & 0xFF));
++    }
++  }
++  return out;
++}
++
++} // anonymous namespace
++
++class ScenicPedestrianCost : public PedestrianCost {
++public:
++  explicit ScenicPedestrianCost(const Costing& costing_options);
++
++  Cost EdgeCost(const baldr::DirectedEdge* edge,
++                const baldr::GraphId& edgeid,
++                const graph_tile_ptr& tile,
++                const baldr::TimeInfo& time_info,
++                uint8_t& flow_sources) const override;
++
++private:
++  float sampleHeatmap(double lat, double lon) const noexcept;
++  void loadFromName(const std::string& name);
++
++  std::vector<uint8_t> heatmap_;
++  double min_lat_ = 0, min_lon_ = 0, max_lat_ = 0, max_lon_ = 0;
++  int width_ = 0, height_ = 0;
++  float scenic_weight_ = 0.8f; // passed via packed name; range [0, 1]
++
++  static constexpr char kSep = '\x1f'; // ASCII unit-separator; not in base64
++};
++
++void ScenicPedestrianCost::loadFromName(const std::string& name) {
++  // Format: "scenic_pedestrian\x1f<b64>\x1f<min_lat>\x1f<min_lon>\x1f<max_lat>\x1f<max_lon>\x1f<w>\x1f<h>\x1f<weight>"
++  static const std::string kPrefix = std::string("scenic_pedestrian") + kSep;
++  if (name.size() <= kPrefix.size() || name.compare(0, kPrefix.size(), kPrefix) != 0)
++    return;
++
++  // Split by kSep starting after the prefix
++  std::vector<std::string> parts;
++  size_t pos = kPrefix.size();
++  while (pos <= name.size()) {
++    size_t end = name.find(kSep, pos);
++    if (end == std::string::npos) end = name.size();
++    parts.push_back(name.substr(pos, end - pos));
++    pos = end + 1;
++  }
++  if (parts.size() < 7) return;
++
++  const std::string& b64 = parts[0];
++  double min_lat, min_lon, max_lat, max_lon;
++  int w, h;
++  try {
++    min_lat = std::stod(parts[1]); min_lon = std::stod(parts[2]);
++    max_lat = std::stod(parts[3]); max_lon = std::stod(parts[4]);
++    w = std::stoi(parts[5]);       h = std::stoi(parts[6]);
++  } catch (...) { return; }
++
++  auto decoded = scenic_base64_decode(b64);
++  if (decoded.size() != static_cast<size_t>(w) * static_cast<size_t>(h)) return;
++
++  heatmap_  = std::move(decoded);
++  min_lat_  = min_lat; min_lon_  = min_lon;
++  max_lat_  = max_lat; max_lon_  = max_lon;
++  width_    = w;       height_   = h;
++  if (parts.size() >= 8) {
++    try { scenic_weight_ = std::stof(parts[7]); } catch (...) {}
++  }
++}
++
++ScenicPedestrianCost::ScenicPedestrianCost(const Costing& costing_options)
++    : PedestrianCost(costing_options) {
++  loadFromName(costing_options.name());
++}
++
++float ScenicPedestrianCost::sampleHeatmap(double lat, double lon) const noexcept {
++  if (heatmap_.empty() || width_ <= 0 || height_ <= 0) return 0.0f;
++  if (lat < min_lat_ || lat > max_lat_ || lon < min_lon_ || lon > max_lon_) return 0.0f;
++  int x = static_cast<int>((lon - min_lon_) / (max_lon_ - min_lon_) * width_);
++  int y = static_cast<int>((max_lat_ - lat) / (max_lat_ - min_lat_) * height_);
++  x = std::max(0, std::min(width_ - 1, x));
++  y = std::max(0, std::min(height_ - 1, y));
++  return heatmap_[static_cast<size_t>(y) * width_ + x] / 255.0f;
++}
++
++Cost ScenicPedestrianCost::EdgeCost(const baldr::DirectedEdge* edge,
++                                    const baldr::GraphId& edgeid,
++                                    const graph_tile_ptr& tile,
++                                    const baldr::TimeInfo& time_info,
++                                    uint8_t& flow_sources) const {
++  Cost base = PedestrianCost::EdgeCost(edge, edgeid, tile, time_info, flow_sources);
++  if (heatmap_.empty() || !tile) return base;
++
++  // Sample heatmap along the full edge shape and average the heat values.
++  float h = 0.0f;
++  int n = 0;
++  const auto edgeinfo = tile->edgeinfo(edge);
++  for (const auto& ll : edgeinfo.shape()) {
++    h += sampleHeatmap(ll.lat(), ll.lng());
++    ++n;
++  }
++  if (n > 0) h /= n;
++  float factor = std::max(0.1f, 1.0f - scenic_weight_ * h);
++  return Cost{base.cost * factor, base.secs};
++}
++
++void ParseScenicPedestrianCostOptions(
++    const rapidjson::Document& doc,
++    const std::string& costing_options_key,
++    Costing* c,
++    google::protobuf::RepeatedPtrField<CodedDescription>& warnings) {
++  ParsePedestrianCostOptions(doc, costing_options_key, c, warnings);
++  c->set_type(Costing::scenic_pedestrian);
++  c->set_name("scenic_pedestrian");
++
++  rapidjson::Value dummy;
++  const auto& json = rapidjson::get_child(doc, costing_options_key.c_str(), dummy);
++
++  auto hdata   = rapidjson::get_optional<std::string>(json, "/heatmap_data");
++  auto min_lat = rapidjson::get_optional<double>(json, "/heatmap_min_lat");
++  auto min_lon = rapidjson::get_optional<double>(json, "/heatmap_min_lon");
++  auto max_lat = rapidjson::get_optional<double>(json, "/heatmap_max_lat");
++  auto max_lon = rapidjson::get_optional<double>(json, "/heatmap_max_lon");
++  auto w       = rapidjson::get_optional<int>(json, "/heatmap_width");
++  auto h       = rapidjson::get_optional<int>(json, "/heatmap_height");
++  auto sw      = rapidjson::get_optional<double>(json, "/heatmap_scenic_weight");
++
++  if (!hdata || hdata->empty() || !min_lat || !min_lon || !max_lat || !max_lon || !w || !h)
++    return;
++
++  auto decoded = scenic_base64_decode(*hdata);
++  if (decoded.size() != static_cast<size_t>(*w) * static_cast<size_t>(*h)) return;
++
++  // Pack heatmap metadata into the name field so both Loki and Thor can read
++  // it from the serialised Costing proto without needing shared state.
++  static const char sep = '\x1f';
++  std::string packed = std::string("scenic_pedestrian") + sep
++      + *hdata + sep
++      + std::to_string(*min_lat) + sep + std::to_string(*min_lon) + sep
++      + std::to_string(*max_lat) + sep + std::to_string(*max_lon) + sep
++      + std::to_string(*w)       + sep + std::to_string(*h)       + sep
++      + std::to_string(sw.value_or(0.8));
++  c->set_name(packed);
++}
++
++cost_ptr_t CreateScenicPedestrianCost(const Costing& costing_options) {
++  return std::make_shared<ScenicPedestrianCost>(costing_options);
++}
++
+ cost_ptr_t CreatePedestrianCost(const Costing& costing_options) {
+   return std::make_shared<PedestrianCost>(costing_options);
+ }
+diff --git a/src/thor/worker.cc b/src/thor/worker.cc
+index c529f87..53524a2 100644
+--- a/src/thor/worker.cc
++++ b/src/thor/worker.cc
+@@ -35,7 +35,7 @@ const std::unordered_map<std::string, float> kMaxDistances = {
+     {"auto", 43200.0f},          {"auto_data_fix", 43200.0f}, {"auto_shorter", 43200.0f},
+     {"bicycle", 7200.0f},        {"bus", 43200.0f},           {"hov", 43200.0f},
+     {"motor_scooter", 14400.0f}, {"motorcycle", 14400.0f},    {"multimodal", 7200.0f},
+-    {"pedestrian", 7200.0f},     {"transit", 14400.0f},       {"truck", 43200.0f},
++    {"pedestrian", 7200.0f},     {"scenic_pedestrian", 7200.0f},     {"transit", 14400.0f},       {"truck", 43200.0f},
+     {"taxi", 43200.0f},          {"bikeshare", 7200.0f},      {"auto_pedestrian", 43200.0f},
+ };
+ // a scale factor to apply to the score so that we bias towards closer results more
+diff --git a/valhalla/sif/costfactory.h b/valhalla/sif/costfactory.h
+index f67804a..7ad606a 100644
+--- a/valhalla/sif/costfactory.h
++++ b/valhalla/sif/costfactory.h
+@@ -12,6 +12,7 @@
+ #include <valhalla/sif/pedestriancost.h>
+ #include <valhalla/sif/transitcost.h>
+ #include <valhalla/sif/truckcost.h>
++#include <valhalla/sif/scenic_pedestriancost.h>
+ 
+ #include <functional>
+ #include <map>
+@@ -48,6 +49,7 @@ public:
+     Register(Costing::none_, CreateNoCost);
+     Register(Costing::bikeshare, CreateNoCost);       // dummy
+     Register(Costing::auto_pedestrian, CreateNoCost); // dummy
++    Register(Costing::scenic_pedestrian, CreateScenicPedestrianCost);
+   }
+ 
+   /**
+diff --git a/valhalla/sif/dynamiccost.h b/valhalla/sif/dynamiccost.h
+index a51e1b9..90168ab 100644
+--- a/valhalla/sif/dynamiccost.h
++++ b/valhalla/sif/dynamiccost.h
+@@ -172,6 +172,7 @@ const std::unordered_map<Costing::Type, std::vector<Costing::Type>> kCostingType
+     {Costing::auto_, {Costing::auto_}},
+     {Costing::bikeshare, {Costing::bikeshare, Costing::pedestrian, Costing::bicycle}},
+     {Costing::auto_pedestrian, {Costing::auto_pedestrian, Costing::pedestrian, Costing::auto_}},
++    {Costing::scenic_pedestrian, {Costing::scenic_pedestrian}},
+ };
+ 
+ const sif::Cost kNoCost(0.0f, 0.0f);

@@ -1,0 +1,42 @@
+--- a/src/sif/pedestriancost.cc
++++ b/src/sif/pedestriancost.cc
+@@ -1000,6 +1000,13 @@
+                 const baldr::TimeInfo& time_info,
+                 uint8_t& flow_sources) const override;
+
++  Cost TransitionCost(const baldr::DirectedEdge* edge,
++                      const baldr::NodeInfo* node,
++                      const EdgeLabel& pred,
++                      const graph_tile_ptr& tile,
++                      const std::function<LimitedGraphReader()>& reader_getter) const override;
++  float AStarCostFactor() const override;
++
+ private:
+   float sampleHeatmap(double lat, double lon) const noexcept;
+   void loadFromName(const std::string& name);
+@@ -1084,7 +1091,25 @@
+   }
+   if (n > 0) h /= n;
+   float factor = std::max(0.1f, 1.0f - scenic_weight_ * h);
+   return Cost{base.cost * factor, base.secs};
++}
++
++Cost ScenicPedestrianCost::TransitionCost(
++    const baldr::DirectedEdge* edge,
++    const baldr::NodeInfo* node,
++    const EdgeLabel& pred,
++    const graph_tile_ptr& tile,
++    const std::function<LimitedGraphReader()>& reader_getter) const {
++  Cost base = PedestrianCost::TransitionCost(edge, node, pred, tile, reader_getter);
++  if (heatmap_.empty() || base.cost <= 0.0f) return base;
++  const auto ll = node->latlng(tile->header()->base_ll());
++  float h = sampleHeatmap(ll.lat(), ll.lng());
++  float factor = std::max(0.1f, 1.0f - scenic_weight_ * h);
++  return Cost{base.cost * factor, base.secs};
+ }
++
++float ScenicPedestrianCost::AStarCostFactor() const {
++  return std::max(0.1f, 1.0f - scenic_weight_) * PedestrianCost::AStarCostFactor();
++}
+
+ void ParseScenicPedestrianCostOptions(

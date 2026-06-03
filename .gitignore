@@ -1,0 +1,11 @@
+.env
+*.env
+*.osm.pbf
+*.osm
+pgdata/
+docker-compose.d/*.yaml
+docker-compose.d/*.yml
+docker-compose.d/*.conf
+cloudflared/
+coverage.out
+.claude

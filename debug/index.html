@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scenic Route Debug</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+/* ── Reset & layout ── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; font-size: 13px; color: #222; }
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 360px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #d0d0d0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 500;
+}
+#sidebar-header {
+  padding: 9px 14px;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#sidebar-header h1 { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+#sidebar-header h1 span { color: #3388ff; }
+#reset-btn { font-size: 11px; color: #999; border-color: #e0e0e0; padding: 3px 8px; flex-shrink: 0; }
+#reset-btn:hover { color: #c00; border-color: #c00; background: #fff5f5; }
+#sidebar-scroll { flex: 1; overflow-y: auto; }
+#sidebar-footer { padding: 10px 14px; border-top: 1px solid #eee; flex-shrink: 0; }
+
+/* ── Collapsible sections ── */
+details.section { border-bottom: 1px solid #eee; }
+details.section > summary {
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #666;
+  background: #fafafa;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+details.section > summary::before { content: '▸'; font-size: 9px; color: #aaa; }
+details[open].section > summary::before { content: '▾'; }
+.section-body { padding: 10px 14px; }
+
+/* ── Form ── */
+.field { margin-bottom: 9px; }
+.field:last-child { margin-bottom: 0; }
+.field label { display: block; margin-bottom: 3px; font-size: 12px; color: #555; }
+.field input[type=text],
+.field input[type=number],
+.field textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: border-color 0.15s;
+}
+.field input:focus,
+.field textarea:focus { outline: none; border-color: #3388ff; box-shadow: 0 0 0 2px rgba(51,136,255,0.15); }
+.field textarea { resize: vertical; min-height: 50px; }
+.field .hint { font-size: 11px; color: #999; margin-top: 3px; line-height: 1.4; }
+.field-row { display: flex; gap: 8px; }
+.field-row .field { flex: 1; }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 5px 11px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.btn:hover { background: #f0f0f0; }
+.btn:active { background: #e4e4e4; }
+.btn-primary {
+  background: #3388ff; color: #fff;
+  border-color: #2277ee; font-weight: 600;
+  width: 100%; padding: 8px; font-size: 13px;
+}
+.btn-primary:hover:not(:disabled) { background: #2277ee; }
+.btn-primary:disabled { background: #aac8f0; border-color: #aac8f0; cursor: not-allowed; }
+#add-point-btn.active {
+  background: #e8f4ff; border-color: #3388ff; color: #1a6fd4; font-weight: 600;
+}
+
+/* ── Points list ── */
+#points-list { list-style: none; margin-bottom: 8px; }
+#points-list li {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 2px;
+  border-bottom: 1px solid #f0f0f0;
+}
+#points-list li:last-child { border-bottom: none; }
+.point-badge {
+  background: #3388ff; color: #fff;
+  border-radius: 50%;
+  width: 19px; height: 19px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+}
+.point-badge.start { background: #22aa44; }
+.point-badge.end   { background: #cc3322; }
+.point-coords { flex: 1; font-size: 11px; color: #444; font-family: monospace; }
+.point-move {
+  background: none; border: none; color: #c0c0c0;
+  cursor: pointer; font-size: 11px; padding: 1px 3px; line-height: 1;
+}
+.point-move:hover:not(:disabled) { color: #555; }
+.point-move:disabled { cursor: default; opacity: 0.3; }
+.point-del {
+  background: none; border: none; color: #ccc;
+  cursor: pointer; font-size: 15px; padding: 0 2px; line-height: 1;
+}
+.point-del:hover { color: #c00; }
+.point-empty { font-size: 12px; color: #aaa; padding: 4px 2px; }
+
+/* ── Status ── */
+#status { font-size: 11px; color: #888; margin-top: 7px; min-height: 16px; line-height: 1.4; }
+#status.error   { color: #c00; }
+#status.success { color: #167a2b; }
+#status.loading { color: #3358cc; }
+
+/* ── Map ── */
+#map { flex: 1; }
+#map.adding-point,
+#map.adding-point .leaflet-interactive { cursor: crosshair !important; }
+
+/* ── Tags modal ── */
+#tags-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35); z-index: 9000;
+  align-items: center; justify-content: center;
+}
+#tags-overlay.open { display: flex; }
+#tags-modal {
+  background: #fff; border-radius: 8px;
+  width: 700px; max-width: 96vw; max-height: 82vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+}
+#tags-modal-head {
+  padding: 13px 16px 10px;
+  border-bottom: 1px solid #eee;
+  display: flex; align-items: center; gap: 10px;
+}
+#tags-modal-head h2 { font-size: 14px; flex: 1; }
+#tags-search {
+  padding: 5px 9px; border: 1px solid #ccc; border-radius: 4px;
+  font-size: 13px; width: 200px;
+}
+#tags-search:focus { outline: none; border-color: #3388ff; }
+#tags-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #999; line-height: 1; }
+#tags-close:hover { color: #333; }
+#tags-table-wrap { flex: 1; overflow-y: auto; }
+#tags-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#tags-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 6px 10px; background: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+  text-align: left; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: #777;
+}
+#tags-table td { padding: 5px 10px; border-bottom: 1px solid #f2f2f2; }
+#tags-table tbody tr:hover td { background: #f0f7ff; cursor: pointer; }
+#tags-table td:nth-child(1) { font-family: monospace; color: #0066aa; white-space: nowrap; }
+#tags-table td:nth-child(2) { font-family: monospace; color: #a06000; white-space: nowrap; }
+#tags-foot { padding: 7px 14px; font-size: 11px; color: #999; border-top: 1px solid #eee; }
+#tags-count { float: right; color: #aaa; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>Scenic Route <span>Debug</span></h1>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button id="share-btn" class="btn" title="Copy shareable link to clipboard">🔗</button>
+        <button id="reset-btn" class="btn" title="Reset everything: clear points, form, and map position">↺ Reset</button>
+      </div>
+    </div>
+    <div id="sidebar-scroll">
+
+      <!-- Points -->
+      <details class="section" open>
+        <summary>Route Points</summary>
+        <div class="section-body">
+          <ul id="points-list">
+            <li class="point-empty">No points yet — click "Add point"</li>
+          </ul>
+          <button class="btn" id="add-point-btn">+ Add point</button>
+          <div class="hint" style="margin-top:5px">
+            Click to add · drag markers to move · Esc to stop
+          </div>
+        </div>
+      </details>
+
+      <!-- POI -->
+      <details class="section" open>
+        <summary>POI Search</summary>
+        <div class="section-body">
+          <div class="field">
+            <label>Semantic query <span style="color:#aaa">(poi_query)</span></label>
+            <textarea id="poi-query" rows="2" placeholder="river Thames water park garden…"></textarea>
+          </div>
+          <div class="field">
+            <label>Include tags <span style="color:#aaa">(poi_include)</span></label>
+            <div style="display:flex;gap:6px;align-items:flex-start">
+              <input type="text" id="poi-include" placeholder='{"leisure":"park","opening_hours":"*"}' style="flex:1">
+              <button class="btn" data-browse-target="poi-include" style="flex-shrink:0;margin-top:0">Browse…</button>
+            </div>
+            <div class="hint">"*" = key exists with any value</div>
+          </div>
+          <div class="field">
+            <label>Exclude tags <span style="color:#aaa">(poi_exclude)</span></label>
+            <div style="display:flex;gap:6px;align-items:flex-start">
+              <input type="text" id="poi-exclude" placeholder='{"access":"private","fee":"*"}' style="flex:1">
+              <button class="btn" data-browse-target="poi-exclude" style="flex-shrink:0">Browse…</button>
+            </div>
+            <div class="hint">"*" = exclude if key exists at all</div>
+          </div>
+          <div class="field">
+            <label>Name search <span style="color:#aaa">(poi_name_query)</span></label>
+            <input type="text" id="poi-name-query" placeholder="Thames, Regent's Park…">
+            <div class="hint">At least one POI field is required</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Route options -->
+      <details class="section" open>
+        <summary>Route Options</summary>
+        <div class="section-body">
+          <div class="field-row">
+            <div class="field">
+              <label>Max detour ratio</label>
+              <input type="number" id="max-detour" value="1.5" step="0.1" min="1" max="10">
+              <div class="hint">× straight-line dist</div>
+            </div>
+            <div class="field">
+              <label>Min similarity</label>
+              <input type="number" id="min-similarity" placeholder="auto" step="0.05" min="0" max="1">
+              <div class="hint">0–1, blank = auto</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Valhalla -->
+      <details class="section">
+        <summary>Valhalla Costing</summary>
+        <div class="section-body">
+          <div class="field-row">
+            <div class="field">
+              <label>Walkway factor</label>
+              <input type="number" id="walkway-factor" placeholder="0.75" step="0.05" min="0.1" max="10">
+              <div class="hint">↓ prefers walkways</div>
+            </div>
+            <div class="field">
+              <label>Path factor</label>
+              <input type="number" id="path-factor" placeholder="0.75" step="0.05" min="0.1" max="10">
+              <div class="hint">↓ prefers highway=path</div>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Use tracks</label>
+              <input type="number" id="use-tracks" placeholder="0.5" step="0.1" min="0" max="1">
+              <div class="hint">0–1 unpaved tracks</div>
+            </div>
+            <div class="field">
+              <label>Living streets</label>
+              <input type="number" id="use-living" placeholder="0.5" step="0.1" min="0" max="1">
+              <div class="hint">0–1</div>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Use hills</label>
+              <input type="number" id="use-hills" placeholder="0.5" step="0.1" min="0" max="1">
+              <div class="hint">0–1 hill willingness</div>
+            </div>
+            <div class="field">
+              <label>Step penalty (s)</label>
+              <input type="number" id="step-penalty" placeholder="30" step="5" min="0">
+              <div class="hint">seconds per staircase</div>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Use ferry</label>
+              <input type="number" id="use-ferry" placeholder="0" step="0.1" min="0" max="1">
+              <div class="hint">0–1</div>
+            </div>
+            <div class="field">
+              <label>Max hiking diff</label>
+              <input type="number" id="max-hiking" placeholder="1" step="1" min="0" max="6">
+              <div class="hint">0–6 sac_scale</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+    </div><!-- /sidebar-scroll -->
+
+    <div id="sidebar-footer">
+      <div style="display:flex;gap:6px;margin-bottom:7px">
+        <button id="plan-btn" class="btn btn-primary" style="flex:1;width:auto">Plan Route</button>
+        <button id="preview-btn" class="btn" title="Open interactive map in new tab" disabled>Preview</button>
+        <button id="gpx-btn" class="btn" title="Download GPX track" disabled>GPX</button>
+        <button id="geojson-btn" class="btn" title="Download GeoJSON" disabled>GeoJSON</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+
+  <!-- ── Map ── -->
+  <div id="map"></div>
+</div>
+
+<!-- ── Tags modal ── -->
+<div id="tags-overlay">
+  <div id="tags-modal">
+    <div id="tags-modal-head">
+      <h2>Browse OSM Tags</h2>
+      <input type="text" id="tags-search" placeholder="Search key, value, description…">
+      <button id="tags-close">×</button>
+    </div>
+    <div id="tags-table-wrap">
+      <table id="tags-table">
+        <thead>
+          <tr><th>key</th><th>value</th><th>description</th></tr>
+        </thead>
+        <tbody id="tags-tbody"></tbody>
+      </table>
+    </div>
+    <div id="tags-foot">
+      Click a row → sets poi_filter · Shift+click → merges into existing filter
+      <span id="tags-count"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── State ────────────────────────────────────────────────────────────────────
+
+const state = {
+  points: [],       // [{id, lat, lon, marker}]
+  nextId: 0,
+  adding: false,
+  resultLayers: [],
+  layerControl: null,
+  clearControl: null,
+  tagsCache: null,
+  routeUUID: null,
+};
+
+// ── Map ──────────────────────────────────────────────────────────────────────
+
+const savedView = (() => {
+  try { return JSON.parse(localStorage.getItem('scenic-map-view')); } catch { return null; }
+})();
+
+const map = L.map('map').setView(
+  savedView ? [savedView.lat, savedView.lng] : [51.5, -0.1],
+  savedView ? savedView.zoom : 13
+);
+const osmLayer = L.tileLayer(
+  '__MAP_TILES_URL__',
+  { maxZoom: 19, attribution: '__MAP_TILES_ATTR__' }
+).addTo(map);
+
+map.on('moveend', () => {
+  const c = map.getCenter();
+  try { localStorage.setItem('scenic-map-view', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() })); } catch {}
+});
+
+map.on('click', e => {
+  if (state.adding) addPoint(e.latlng.lat, e.latlng.lng);
+});
+
+// ── Locate control ───────────────────────────────────────────────────────────
+
+const LocateControl = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+    const btn = L.DomUtil.create('a', '', container);
+    btn.title = 'Center on my location';
+    btn.href = '#';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('aria-label', 'Center on my location');
+    btn.textContent = '⊙';
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.on(btn, 'click', e => {
+      L.DomEvent.preventDefault(e);
+      if (!navigator.geolocation) { setStatus('Geolocation not supported', 'error'); return; }
+      btn.style.opacity = '0.5';
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          map.setView([pos.coords.latitude, pos.coords.longitude], 15);
+          btn.style.opacity = '';
+        },
+        err => {
+          setStatus('Location error: ' + err.message, 'error');
+          btn.style.opacity = '';
+        },
+        { timeout: 10000 }
+      );
+    });
+    return container;
+  },
+});
+new LocateControl().addTo(map);
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (state.adding) setAdding(false);
+    closeTagsModal();
+  }
+});
+
+// ── Points ───────────────────────────────────────────────────────────────────
+
+function pointIcon(num, total) {
+  const bg = num === 1 ? '#22aa44' : num === total ? '#cc3322' : '#3388ff';
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      background:${bg};color:#fff;border-radius:50%;
+      width:22px;height:22px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:11px;font-weight:700;
+      border:2px solid #fff;
+      box-shadow:0 1px 4px rgba(0,0,0,0.35);
+    ">${num}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
+function addPoint(lat, lon) {
+  const id = state.nextId++;
+  const total = state.points.length + 1;
+  const marker = L.marker([lat, lon], {
+    draggable: true,
+    icon: pointIcon(total, total),
+  }).addTo(map);
+
+  marker.on('dragend', () => {
+    const p = state.points.find(q => q.id === id);
+    if (!p) return;
+    p.lat = marker.getLatLng().lat;
+    p.lon = marker.getLatLng().lng;
+    renderPoints();
+  });
+
+  state.points.push({ id, lat, lon, marker });
+  refreshIcons();
+  renderPoints();
+}
+
+function removePoint(id) {
+  const i = state.points.findIndex(p => p.id === id);
+  if (i === -1) return;
+  map.removeLayer(state.points[i].marker);
+  state.points.splice(i, 1);
+  refreshIcons();
+  renderPoints();
+}
+
+function movePoint(id, dir) {
+  const i = state.points.findIndex(p => p.id === id);
+  const j = i + dir;
+  if (j < 0 || j >= state.points.length) return;
+  [state.points[i], state.points[j]] = [state.points[j], state.points[i]];
+  refreshIcons();
+  renderPoints();
+}
+
+function refreshIcons() {
+  const n = state.points.length;
+  state.points.forEach((p, i) => p.marker.setIcon(pointIcon(i + 1, n)));
+}
+
+function savePoints() {
+  try { localStorage.setItem('scenic-points', JSON.stringify(state.points.map(p => [p.lat, p.lon]))); } catch {}
+}
+
+function loadPoints() {
+  try {
+    const pts = JSON.parse(localStorage.getItem('scenic-points') || '[]');
+    pts.forEach(([lat, lon]) => addPoint(lat, lon));
+  } catch {}
+}
+
+function renderPoints() {
+  savePoints();
+  updateURL();
+  const ul = document.getElementById('points-list');
+  if (state.points.length === 0) {
+    ul.innerHTML = '<li class="point-empty">No points yet — click "Add point"</li>';
+    return;
+  }
+  const n = state.points.length;
+  ul.innerHTML = state.points.map((p, i) => {
+    const cls = i === 0 ? 'start' : i === n - 1 ? 'end' : '';
+    return `<li>
+      <span class="point-badge ${cls}">${i + 1}</span>
+      <span class="point-coords">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</span>
+      <button class="point-move" data-action="up"   data-id="${p.id}" ${i === 0     ? 'disabled' : ''}>↑</button>
+      <button class="point-move" data-action="down" data-id="${p.id}" ${i === n - 1 ? 'disabled' : ''}>↓</button>
+      <button class="point-del"  data-action="del"  data-id="${p.id}">×</button>
+    </li>`;
+  }).join('');
+}
+
+document.getElementById('points-list').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn || btn.disabled) return;
+  const id = parseInt(btn.dataset.id, 10);
+  if (btn.dataset.action === 'del')  removePoint(id);
+  if (btn.dataset.action === 'up')   movePoint(id, -1);
+  if (btn.dataset.action === 'down') movePoint(id, +1);
+});
+
+function setAdding(on) {
+  state.adding = on;
+  const btn = document.getElementById('add-point-btn');
+  const mapEl = document.getElementById('map');
+  if (on) {
+    btn.classList.add('active');
+    btn.textContent = '× Stop adding';
+    mapEl.classList.add('adding-point');
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '+ Add point';
+    mapEl.classList.remove('adding-point');
+  }
+}
+
+document.getElementById('add-point-btn').addEventListener('click', () => setAdding(!state.adding));
+
+// ── MCP client ───────────────────────────────────────────────────────────────
+
+async function callMCP(name, args) {
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name, arguments: args },
+  });
+
+  const resp = await fetch('/mcp', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+    },
+    body,
+  });
+
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+
+  const ct = resp.headers.get('content-type') || '';
+  const text = await resp.text();
+
+  // Server responds with SSE (text/event-stream) or plain JSON
+  if (ct.includes('text/event-stream')) {
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      let d;
+      try { d = JSON.parse(line.slice(6)); } catch { continue; }
+      if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      if (d.result) return d.result;
+    }
+    throw new Error('No result found in SSE response');
+  }
+
+  const d = JSON.parse(text);
+  if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+  return d.result;
+}
+
+// ── Result rendering ─────────────────────────────────────────────────────────
+
+var ClearControl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd: function() {
+    var btn = L.DomUtil.create('button', 'leaflet-bar');
+    btn.textContent = 'Clear';
+    btn.title = 'Clear route result from map';
+    btn.style.cssText = 'display:block;padding:0 8px;height:26px;line-height:26px;font-size:12px;cursor:pointer;background:white;border:none;width:100%';
+    L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation)
+              .on(btn, 'click', L.DomEvent.preventDefault)
+              .on(btn, 'click', doClear);
+    return btn;
+  }
+});
+
+function clearResult() {
+  state.resultLayers.forEach(l => map.removeLayer(l));
+  state.resultLayers = [];
+  if (state.layerControl) { map.removeControl(state.layerControl); state.layerControl = null; }
+  if (state.clearControl) { map.removeControl(state.clearControl); state.clearControl = null; }
+}
+
+function renderResult(fc) {
+  clearResult();
+
+  const imgOverlay   = { feat: null };
+  const searchArea   = [];
+  const baseline     = [];
+  const scenic       = [];
+  const pois         = [];
+  const peaks        = [];
+
+  for (const f of fc.features || []) {
+    const p = f.properties || {};
+    if      (p._type === 'image_overlay') imgOverlay.feat = f;
+    else if (p._type === 'search_area')   searchArea.push(f);
+    else if (p._type === 'heatmap_peak')  peaks.push(f);
+    else if (p.label === 'baseline')      baseline.push(f);
+    else if (p.label === 'scenic')        scenic.push(f);
+    else                                  pois.push(f);
+  }
+
+  // Heatmap
+  let heatmapLayer;
+  if (imgOverlay.feat) {
+    const p = imgOverlay.feat.properties;
+    heatmapLayer = L.imageOverlay(
+      `data:${p._mime};base64,${p._data}`,
+      p._bounds,
+      { opacity: p.opacity ?? 0.65, interactive: false }
+    ).addTo(map);
+  } else {
+    heatmapLayer = L.layerGroup().addTo(map);
+  }
+  state.resultLayers.push(heatmapLayer);
+
+  // Search area
+  const searchAreaLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: searchArea },
+    { style: () => ({ color: '#ff6600', weight: 1, fill: false }) }
+  ).addTo(map);
+  state.resultLayers.push(searchAreaLayer);
+
+  // Baseline
+  const baselineLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: baseline },
+    {
+      style: () => ({ color: '#888', weight: 3, opacity: 0.7 }),
+      onEachFeature: (f, l) => l.bindPopup(
+        'Baseline route<br>' + ((f.properties.length_km || 0).toFixed(2)) + ' km'
+      ),
+    }
+  ).addTo(map);
+  state.resultLayers.push(baselineLayer);
+
+  // Scenic route
+  const scenicLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: scenic },
+    {
+      style: () => ({ color: '#0000ff', weight: 5, opacity: 0.85 }),
+      onEachFeature: (f, l) => l.bindPopup(
+        'Scenic route<br>' + ((f.properties.length_km || 0).toFixed(2)) + ' km'
+      ),
+    }
+  ).addTo(map);
+  state.resultLayers.push(scenicLayer);
+
+  // POIs
+  const poiLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: pois },
+    {
+      style: f => {
+        const c = f.properties['marker-color'] || '#888';
+        const s = f.properties.similarity || 0;
+        return { color: c, fillColor: c, weight: 2, opacity: 0.7, fillOpacity: 0.25 * s };
+      },
+      pointToLayer: (f, ll) => {
+        const s = f.properties['marker-size'];
+        return L.circleMarker(ll, {
+          radius: s === 'large' ? 8 : s === 'medium' ? 5 : 3,
+          fillColor: f.properties['marker-color'] || '#888',
+          color: '#fff', weight: 1, fillOpacity: 0.85,
+        });
+      },
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        const lines = [];
+        if (p.name) lines.push('<b>' + esc(p.name) + '</b>');
+        if (p.similarity != null) lines.push('sim: ' + p.similarity.toFixed(3));
+        const tk = ['waterway','leisure','natural','landuse','amenity','tourism','historic','man_made'];
+        const k = tk.find(k => p[k]);
+        if (k) lines.push(k + '=' + p[k]);
+        if (lines.length) l.bindPopup(lines.join('<br>'));
+      },
+    }
+  ).addTo(map);
+  state.resultLayers.push(poiLayer);
+
+  // Heat peaks — used peaks: 🔥 pin marker; unused peaks: small gray circle.
+  const peaksLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: peaks },
+    {
+      pointToLayer: (f, ll) => {
+        const h    = f.properties.heat || 0;
+        const used = f.properties._used;
+        if (used) {
+          const d  = 28 + Math.round(h * 10);
+          const th = Math.round(d * 0.45);
+          const tw = Math.round(d * 0.38);
+          const fs = Math.round(d * 0.52);
+          const totalH = d + th;
+          return L.marker(ll, {
+            icon: L.divIcon({
+              className: '',
+              html: `<div style="width:${d}px;height:${totalH}px;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.45))">
+                <div style="
+                  width:${d}px;height:${d}px;
+                  background:#ff4400;border-radius:50%;border:2px solid #fff;
+                  display:flex;align-items:center;justify-content:center;
+                  font-size:${fs}px;line-height:1;
+                ">🔥</div>
+                <div style="
+                  width:0;height:0;margin:0 auto;margin-top:-1px;
+                  border-left:${tw}px solid transparent;
+                  border-right:${tw}px solid transparent;
+                  border-top:${th}px solid #ff4400;
+                "></div>
+              </div>`,
+              iconSize: [d, totalH],
+              iconAnchor: [d / 2, totalH],
+              popupAnchor: [0, -totalH],
+            }),
+          });
+        } else {
+          const d = 18 + Math.round(h * 6);
+          return L.marker(ll, {
+            icon: L.divIcon({
+              className: '',
+              html: `<div style="
+                width:${d}px;height:${d}px;
+                background:rgba(120,120,120,0.55);border-radius:50%;
+                border:2px solid rgba(80,80,80,0.7);
+                box-sizing:border-box;
+              "></div>`,
+              iconSize: [d, d],
+              iconAnchor: [d / 2, d / 2],
+              popupAnchor: [0, -d / 2],
+            }),
+          });
+        }
+      },
+      onEachFeature: (f, l) => {
+        const used = f.properties._used ? ' <b>(used as waypoint)</b>' : ' (not used)';
+        l.bindPopup('Heat peak' + used + '<br>heat: ' + (f.properties.heat || 0).toFixed(3));
+      },
+    }
+  ).addTo(map);
+  state.resultLayers.push(peaksLayer);
+
+  state.layerControl = L.control.layers(
+    { 'OpenStreetMap': osmLayer },
+    {
+      'Heatmap': heatmapLayer,
+      'Scenic route': scenicLayer,
+      'Baseline route': baselineLayer,
+      'Search area': searchAreaLayer,
+      'POIs': poiLayer,
+      'Heat peaks': peaksLayer,
+    },
+    { collapsed: false }
+  ).addTo(map);
+
+  state.clearControl = new ClearControl().addTo(map);
+
+  // Fit bounds
+  let bb = null;
+  for (const f of [...scenic, ...baseline, ...searchArea]) {
+    const g = f.geometry || {};
+    let cs = [];
+    if (g.type === 'LineString') cs = g.coordinates;
+    else if (g.type === 'Polygon') cs = g.coordinates.flat();
+    for (const [lon, lat] of cs) {
+      if (!bb) bb = [lat, lon, lat, lon];
+      else { bb[0]=Math.min(bb[0],lat); bb[1]=Math.min(bb[1],lon); bb[2]=Math.max(bb[2],lat); bb[3]=Math.max(bb[3],lon); }
+    }
+  }
+  if (bb) map.fitBounds([[bb[0],bb[1]],[bb[2],bb[3]]], { padding: [20, 20] });
+}
+
+// ── Tags modal ───────────────────────────────────────────────────────────────
+
+function openTagsModal() {
+  document.getElementById('tags-overlay').classList.add('open');
+  if (!state.tagsCache) fetchTags();
+  else renderTagsTable(document.getElementById('tags-search').value);
+}
+
+function closeTagsModal() {
+  document.getElementById('tags-overlay').classList.remove('open');
+}
+
+async function fetchTags() {
+  document.getElementById('tags-tbody').innerHTML =
+    '<tr><td colspan="3" style="text-align:center;padding:20px;color:#aaa">Loading…</td></tr>';
+  try {
+    const result = await callMCP('list_tags', {});
+    const text = result?.content?.find(c => c.type === 'text')?.text;
+    const data = JSON.parse(text);
+    state.tagsCache = data.tags || [];
+    renderTagsTable(document.getElementById('tags-search').value);
+  } catch (e) {
+    document.getElementById('tags-tbody').innerHTML =
+      `<tr><td colspan="3" style="color:#c00;padding:12px">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderTagsTable(q) {
+  q = q.toLowerCase();
+  const all = state.tagsCache || [];
+  const filtered = q
+    ? all.filter(t =>
+        t.key.includes(q) ||
+        t.value.includes(q) ||
+        (t.description || '').toLowerCase().includes(q))
+    : all;
+
+  const shown = filtered.slice(0, 300);
+  document.getElementById('tags-count').textContent =
+    filtered.length > shown.length
+      ? `${shown.length} of ${filtered.length} shown`
+      : `${filtered.length} tags`;
+
+  document.getElementById('tags-tbody').innerHTML = shown.map(t =>
+    `<tr data-key="${esc(t.key)}" data-value="${esc(t.value)}">
+      <td>${esc(t.key)}</td>
+      <td>${esc(t.value)}</td>
+      <td>${esc(t.description || '')}</td>
+    </tr>`
+  ).join('');
+}
+
+document.getElementById('tags-search').addEventListener('input', e => {
+  if (state.tagsCache) renderTagsTable(e.target.value);
+});
+
+document.getElementById('tags-tbody').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-key]');
+  if (!tr) return;
+  const key = tr.dataset.key, val = tr.dataset.value;
+  const inp = document.getElementById(browseTarget);
+  if (e.shiftKey) {
+    let cur = {};
+    try { cur = JSON.parse(inp.value); } catch {}
+    cur[key] = val;
+    inp.value = JSON.stringify(cur);
+  } else {
+    inp.value = JSON.stringify({ [key]: val });
+  }
+  closeTagsModal();
+  saveForm();
+  updateURL();
+});
+
+document.getElementById('tags-close').addEventListener('click', closeTagsModal);
+document.getElementById('tags-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('tags-overlay')) closeTagsModal();
+});
+// Shared browse target — set when a Browse button is clicked.
+let browseTarget = 'poi-include';
+
+document.querySelectorAll('[data-browse-target]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    browseTarget = btn.dataset.browseTarget;
+    openTagsModal();
+  });
+});
+
+// ── Plan route ───────────────────────────────────────────────────────────────
+
+function setStatus(msg, cls = '') {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = cls;
+}
+
+function numVal(id) {
+  const v = document.getElementById(id).value.trim();
+  if (!v) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
+function intVal(id) {
+  const v = document.getElementById(id).value.trim();
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  return isNaN(n) ? null : n;
+}
+
+async function planRoute() {
+  if (state.points.length < 2) {
+    setStatus('Add at least 2 route points', 'error');
+    return;
+  }
+
+  const poiQuery   = document.getElementById('poi-query').value.trim();
+  const poiInclude = document.getElementById('poi-include').value.trim();
+  const poiExclude = document.getElementById('poi-exclude').value.trim();
+  const poiName    = document.getElementById('poi-name-query').value.trim();
+
+  if (!poiQuery && !poiInclude && !poiName) {
+    setStatus('Fill in at least one POI field (query, include, or name)', 'error');
+    return;
+  }
+
+  let includeObj = null;
+  if (poiInclude) {
+    try { includeObj = JSON.parse(poiInclude); }
+    catch { setStatus('poi_include: invalid JSON', 'error'); return; }
+  }
+  let excludeObj = null;
+  if (poiExclude) {
+    try { excludeObj = JSON.parse(poiExclude); }
+    catch { setStatus('poi_exclude: invalid JSON', 'error'); return; }
+  }
+
+  const args = {
+    points: state.points.map(p => [p.lat, p.lon]),
+    max_detour_ratio: numVal('max-detour') ?? 1.5,
+  };
+  if (poiQuery)   args.poi_query      = poiQuery;
+  if (includeObj) args.poi_include    = includeObj;
+  if (excludeObj) args.poi_exclude    = excludeObj;
+  if (poiName)    args.poi_name_query = poiName;
+
+  const minSim = numVal('min-similarity');     if (minSim !== null)  args.min_similarity      = minSim;
+  const wf     = numVal('walkway-factor');     if (wf     !== null)  args.walkway_factor      = wf;
+  const pf     = numVal('path-factor');        if (pf     !== null)  args.path_factor         = pf;
+  const ut     = numVal('use-tracks');         if (ut     !== null)  args.use_tracks          = ut;
+  const ul     = numVal('use-living');         if (ul     !== null)  args.use_living_streets  = ul;
+  const uh     = numVal('use-hills');          if (uh     !== null)  args.use_hills           = uh;
+  const sp     = numVal('step-penalty');       if (sp     !== null)  args.step_penalty        = sp;
+  const uf     = numVal('use-ferry');          if (uf     !== null)  args.use_ferry           = uf;
+  const mh     = intVal('max-hiking');         if (mh     !== null)  args.max_hiking_difficulty = mh;
+
+  const btn = document.getElementById('plan-btn');
+  btn.disabled = true;
+  btn.textContent = 'Planning…';
+  setStatus('Planning route…', 'loading');
+
+  const t0 = Date.now();
+  try {
+    // Step 1: plan and save route, get UUID from preview link
+    const planResult = await callMCP('plan_scenic_route', args);
+    const summaryItem = planResult?.content?.find(c => c.type === 'text');
+    if (!summaryItem) throw new Error('No text in plan_scenic_route response');
+    const uuidMatch = summaryItem.text.match(/\/preview\/([0-9a-f-]+)/i);
+    if (!uuidMatch) throw new Error('No preview link in plan_scenic_route response');
+    const routeUUID = uuidMatch[1].trim();
+
+    // Step 2: retrieve debug GeoJSON via HTTP
+    setStatus('Fetching debug layers…', 'loading');
+    const debugResp = await fetch(`/debug/${routeUUID}`);
+    if (!debugResp.ok) throw new Error(`debug fetch failed: ${debugResp.status}`);
+    const fc = await debugResp.json();
+    if (fc.type !== 'FeatureCollection') throw new Error('Expected FeatureCollection');
+    state.routeUUID = routeUUID;
+    document.getElementById('preview-btn').disabled = false;
+    document.getElementById('gpx-btn').disabled = false;
+    document.getElementById('geojson-btn').disabled = false;
+    renderResult(fc);
+    setStatus(`Done in ${((Date.now() - t0) / 1000).toFixed(1)}s · uuid: ${routeUUID}`, 'success');
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Plan Route';
+  }
+}
+
+document.getElementById('plan-btn').addEventListener('click', planRoute);
+
+function doClear() {
+  clearResult();
+  state.routeUUID = null;
+  document.getElementById('preview-btn').disabled = true;
+  document.getElementById('gpx-btn').disabled = true;
+  document.getElementById('geojson-btn').disabled = true;
+  setStatus('');
+}
+
+document.getElementById('preview-btn').addEventListener('click', () => {
+  if (!state.routeUUID) return;
+  window.open(`/preview/${state.routeUUID}`, '_blank');
+});
+
+document.getElementById('gpx-btn').addEventListener('click', () => {
+  if (!state.routeUUID) return;
+  window.open(`/export/${state.routeUUID}.gpx`, '_blank');
+});
+
+document.getElementById('geojson-btn').addEventListener('click', () => {
+  if (!state.routeUUID) return;
+  window.open(`/export/${state.routeUUID}.geojson`, '_blank');
+});
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if (!confirm('Reset everything? This will clear all route points, the form, and the saved map position.')) return;
+  // Clear result layers
+  clearResult();
+  // Remove all route points
+  [...state.points].forEach(p => removePoint(p.id));
+  // Reset form fields
+  FORM_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('max-detour').value = '1.5';
+  saveForm();
+  // Reset map view to default
+  map.setView([51.5, -0.1], 13);
+  // Clear localStorage
+  localStorage.removeItem('scenic-points');
+  localStorage.removeItem('scenic-map-view');
+  setStatus('');
+});
+
+// Ctrl+Enter in any POI textarea submits
+document.getElementById('poi-query').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) planRoute();
+});
+
+// ── Form persistence ─────────────────────────────────────────────────────────
+
+const FORM_FIELDS = [
+  'poi-query','poi-include','poi-exclude','poi-name-query',
+  'max-detour','min-similarity',
+  'walkway-factor','path-factor','use-tracks','use-living',
+  'use-hills','step-penalty','use-ferry','max-hiking',
+];
+
+function saveForm() {
+  const s = {};
+  FORM_FIELDS.forEach(id => { s[id] = document.getElementById(id).value; });
+  try { localStorage.setItem('scenic-debug', JSON.stringify(s)); } catch {}
+}
+
+function loadForm() {
+  try {
+    const s = JSON.parse(localStorage.getItem('scenic-debug') || '{}');
+    FORM_FIELDS.forEach(id => { if (s[id] != null) document.getElementById(id).value = s[id]; });
+  } catch {}
+}
+
+FORM_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveForm));
+
+// ── URL hash (permalink) ──────────────────────────────────────────────────────
+// Format: #pts=lat,lon;lat,lon&q=poi+query&inc={"leisure":"park"}&det=1.5&...
+// All params are optional; unrecognised params are ignored.
+// Hash is updated live via replaceState — refresh restores the same state.
+
+const HASH_FIELDS = {
+  'q':   'poi-query',
+  'inc': 'poi-include',
+  'exc': 'poi-exclude',
+  'nq':  'poi-name-query',
+  'det': 'max-detour',
+  'sim': 'min-similarity',
+  'wf':  'walkway-factor',
+  'pf':  'path-factor',
+  'ut':  'use-tracks',
+  'ul':  'use-living',
+  'uh':  'use-hills',
+  'sp':  'step-penalty',
+  'uf':  'use-ferry',
+  'mh':  'max-hiking',
+};
+
+function encodeURL() {
+  const p = new URLSearchParams();
+
+  if (state.points.length) {
+    p.set('pts', state.points.map(pt =>
+      `${round5(pt.lat)},${round5(pt.lon)}`
+    ).join(';'));
+  }
+
+  for (const [key, id] of Object.entries(HASH_FIELDS)) {
+    const v = document.getElementById(id).value.trim();
+    if (v) p.set(key, v);
+  }
+
+  const c = map.getCenter();
+  p.set('lat', round5(c.lat));
+  p.set('lng', round5(c.lng));
+  p.set('z', map.getZoom());
+
+  return '#' + p.toString();
+}
+
+// applyURL restores state from a hash string.
+// Returns true if the hash contained run=1 (autorun requested).
+function applyURL(hash) {
+  if (!hash || hash === '#') return false;
+  try {
+    const p = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+
+    // Points
+    const pts = p.get('pts');
+    if (pts) {
+      const pairs = pts.split(';').map(s => {
+        const [lat, lon] = s.split(',').map(Number);
+        return isNaN(lat) || isNaN(lon) ? null : [lat, lon];
+      }).filter(Boolean);
+      if (pairs.length >= 2) {
+        [...state.points].forEach(pt => removePoint(pt.id));
+        pairs.forEach(([lat, lon]) => addPoint(lat, lon));
+      }
+    }
+
+    // Form fields
+    for (const [key, id] of Object.entries(HASH_FIELDS)) {
+      if (p.has(key)) document.getElementById(id).value = p.get(key);
+    }
+
+    // Map view
+    const lat = p.get('lat'), lng = p.get('lng'), z = p.get('z');
+    if (lat && lng) map.setView([+lat, +lng], z ? +z : map.getZoom());
+
+    saveForm();
+    return p.get('run') === '1';
+  } catch { return false; /* ignore malformed hash */ }
+}
+
+function updateURL() {
+  try { history.replaceState(null, '', encodeURL()); } catch {}
+}
+
+function round5(n) { return Math.round(+n * 1e5) / 1e5; }
+
+// Share button: copy current permalink to clipboard.
+document.getElementById('share-btn').addEventListener('click', async () => {
+  updateURL();
+  const url = location.href;
+  try {
+    await navigator.clipboard.writeText(url);
+    setStatus('Link copied!', 'success');
+    setTimeout(() => setStatus(''), 2000);
+  } catch {
+    prompt('Copy this link:', url);
+  }
+});
+
+// Update hash on map move.
+map.on('moveend', updateURL);
+
+// Update hash on form changes.
+FORM_FIELDS.forEach(id =>
+  document.getElementById(id).addEventListener('input', updateURL)
+);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+loadForm();
+loadPoints();
+const _autorun = location.hash ? applyURL(location.hash) : false;
+updateURL();
+if (_autorun) planRoute();
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

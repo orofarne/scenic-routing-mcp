@@ -1,0 +1,38 @@
+# Public MCP endpoint via Cloudflare Tunnel + Access (zero-trust, no inbound ports).
+#
+# Prerequisites:
+#   - Cloudflare account with a domain
+#   - cloudflared installed: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+#
+# Setup:
+#   1. cloudflared tunnel login
+#   2. cloudflared tunnel create scenic-routing   # note the tunnel ID
+#   3. Create ./cloudflared/config.yml (see README.md for the format)
+#   4. Copy tunnel credentials: cp ~/.cloudflared/<tunnel-id>.json ./cloudflared/
+#   5. Add CNAME in Cloudflare Dashboard:
+#        mcp.yourdomain.com → <tunnel-id>.cfargotunnel.com  (proxied)
+#   6. Create a Cloudflare Access application for mcp.yourdomain.com
+#      with a Service Token policy (Zero Trust → Access → Applications)
+#   7. cp docker-compose.d/cloudflare-tunnel.yaml.example docker-compose.d/cloudflare-tunnel.yaml
+#   8. make up
+#
+# Register in Claude Code:
+#   claude mcp add --transport http \
+#     --header "CF-Access-Client-Id: <client-id>" \
+#     --header "CF-Access-Client-Secret: <client-secret>" \
+#     scenic-routing https://mcp.yourdomain.com/
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    networks:
+      - scenic
+    depends_on:
+      - mcp
+
+networks:
+  scenic:

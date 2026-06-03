@@ -1,0 +1,4 @@
+# osm2pgsql flex style — scenic routing
+# Используем flex output для точного контроля над импортом
+
+# Этот файл — placeholder; реальная логика в scenic.lua

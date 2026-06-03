@@ -1,0 +1,228 @@
+services:
+
+  # ─── PostgreSQL + PostGIS + pgvector ───────────────────────────────────────
+  db:
+    build:
+      context: ./infra/db
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-scenic}
+      POSTGRES_USER:     ${POSTGRES_USER:-scenic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scenic}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - scenic
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scenic} -d ${POSTGRES_DB:-scenic}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ─── Ollama embedding server ────────────────────────────────────────────────
+  # Serves nomic-embed-text for both offline (importer) and online (mcp) embedding.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - scenic
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # ─── Ollama model pull (one-shot) ──────────────────────────────────────────
+  # Pulls nomic-embed-text into the ollama-data volume before importers start.
+  # On subsequent runs the model is already cached — completes instantly.
+  ollama-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "nomic-embed-text"]
+    networks:
+      - scenic
+
+  # ─── OSM init (one-shot) ───────────────────────────────────────────────────
+  # Downloads PBF if missing, runs initial PostGIS import + embedding if DB is empty.
+  osm-importer-init:
+    platform: linux/amd64
+    build:
+      context: ./infra/osm-importer
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB:      ${POSTGRES_DB:-scenic}
+      POSTGRES_USER:    ${POSTGRES_USER:-scenic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scenic}
+      OSM_PBF_FILE:  ${OSM_PBF_FILE:-/data/osm/region.osm.pbf}
+      OSM_REGIONS:   ${OSM_REGIONS:-}
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - osm-data:/data/osm
+    networks:
+      - scenic
+    command: ["/scripts/init.sh"]
+
+  # ─── OSM Importer ──────────────────────────────────────────────────────────
+  # Cron daemon: nightly at 02:00 UTC patches PBF + re-imports PostGIS + re-embeds.
+  # After import, writes /data/osm/pbf_updated to trigger valhalla-builder.
+  osm-importer:
+    platform: linux/amd64
+    build:
+      context: ./infra/osm-importer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      osm-importer-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB:      ${POSTGRES_DB:-scenic}
+      POSTGRES_USER:    ${POSTGRES_USER:-scenic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scenic}
+      OSM_PBF_FILE:    ${OSM_PBF_FILE:-/data/osm/region.osm.pbf}
+      OSM_REGIONS:     ${OSM_REGIONS:-}
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - osm-data:/data/osm
+    networks:
+      - scenic
+
+  # ─── Valhalla tile builder ──────────────────────────────────────────────────
+  # Builds routing tiles from the PBF and packages them into tiles.tar.
+  # On startup: builds initial tiles.tar if not present.
+  # Watch loop: rebuilds when osm-importer writes /data/osm/pbf_updated,
+  #             then writes /tiles/reload for valhalla to hot-reload.
+  valhalla-builder:
+    build:
+      context: ./infra/valhalla-builder
+      dockerfile: Dockerfile
+      additional_contexts:
+        valhalla-base: "docker-image://scenic-routing-mcp/valhalla-base:3.7.0"
+    restart: unless-stopped
+    depends_on:
+      osm-importer-init:
+        condition: service_completed_successfully
+    environment:
+      OSM_PBF_FILE: ${OSM_PBF_FILE:-/data/osm/region.osm.pbf}
+    volumes:
+      - osm-data:/data/osm  # read PBF + pbf_updated sentinel
+      - valhalla-tiles:/tiles  # write tiles.tar + reload sentinel
+    networks:
+      - scenic
+
+  # ─── Valhalla routing engine ────────────────────────────────────────────────
+  # Serves pedestrian routing, matrix, and isochrone APIs on port 8002.
+  # Waits for tiles.tar produced by valhalla-builder, then serves.
+  # Watches /tiles/reload to hot-reload when valhalla-builder produces new tiles
+  # (downtime = valhalla_service restart only, not tile build time).
+  valhalla:
+    build:
+      context: ./infra/valhalla
+      dockerfile: Dockerfile
+      additional_contexts:
+        valhalla-base: "docker-image://scenic-routing-mcp/valhalla-base:3.7.0"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8002:8002"
+    volumes:
+      - valhalla-tiles:/tiles  # read tiles.tar + reload sentinel
+    networks:
+      - scenic
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8002/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 900s  # tile build on first run can take 10+ minutes under Rosetta
+
+  # ─── Redis (route cache) ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - scenic
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── MCP server (scenic routing planning layer) ────────────────────────────
+  # Serves MCP over Streamable HTTP transport on port 8080.
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-scenic}:${POSTGRES_PASSWORD:-scenic}@db:5432/${POSTGRES_DB:-scenic}
+      VALHALLA_URL: http://valhalla:8002
+      OLLAMA_URL:   http://ollama:11434
+      REDIS_URL:      redis:6379
+      ROUTE_TTL:      ${ROUTE_TTL:-1h}
+      MAP_TILES_URL:  ${MAP_TILES_URL:-}
+      MAP_TILES_ATTR: ${MAP_TILES_ATTR:-}
+      PUBLIC_URL:     ${PUBLIC_URL:-http://localhost:8080}
+      MCP_ADDR:       :8080
+      LOG_LEVEL:      ${LOG_LEVEL:-debug}
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - scenic
+
+  # ─── Debug UI ──────────────────────────────────────────────────────────────
+  # Interactive web UI for plan_scenic_route. Serves on port 8081.
+  # nginx proxies /mcp → mcp:8080/mcp; all other logic runs client-side.
+  debug:
+    build:
+      context: ./debug
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mcp
+    environment:
+      MAP_TILES_URL:  ${MAP_TILES_URL:-}
+      MAP_TILES_ATTR: ${MAP_TILES_ATTR:-}
+    ports:
+      - "127.0.0.1:8081:80"
+    networks:
+      - scenic
+
+
+networks:
+  scenic:
+
+volumes:
+  pgdata:
+  osm-data:
+  valhalla-tiles:
+  ollama-data:  # nomic-embed-text model cache (~300 MB)

@@ -1,0 +1,11 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # defer resp.Body.Close() is idiomatic Go: the body has already been read,
+      # the error (usually a network tear-down event) is unrecoverable in defer context,
+      # and the close is required to return the connection to the pool regardless.
+      # Fixing these three call sites structurally would add noise with no safety benefit.
+      exclude-functions:
+        - (io.ReadCloser).Close

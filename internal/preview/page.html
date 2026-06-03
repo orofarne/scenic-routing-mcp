@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #map { height: 100%; }
+    .locate-btn {
+      background: white; border: none; border-radius: 2px;
+      width: 30px; height: 30px; font-size: 16px; line-height: 30px;
+      text-align: center; cursor: pointer; display: block;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+    }
+    .locate-btn:hover { background: #f4f4f4; }
+    .locate-btn.active { background: #e8f0fe; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    var d = {{.DataJSON}};
+
+    var map = L.map('map');
+    L.tileLayer(d.tilesURL, {
+      attribution: d.tilesAttr,
+      maxZoom: 19
+    }).addTo(map);
+
+    var LocateControl = L.Control.extend({
+      options: { position: 'topleft' },
+      onAdd: function() {
+        var btn = L.DomUtil.create('div', 'locate-btn leaflet-bar');
+        btn.title = 'Show / hide my location';
+        btn.textContent = '📍';
+        L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation)
+                  .on(btn, 'click', L.DomEvent.preventDefault)
+                  .on(btn, 'click', toggleLocate);
+        this._btn = btn;
+        return btn;
+      }
+    });
+    new LocateControl().addTo(map);
+
+    var routeLayer = L.geoJSON(d.route, {
+      style: { color: '#2277ff', weight: 4, opacity: 0.9 }
+    }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [48, 48] });
+
+    L.circleMarker(d.start, {
+      radius: 9, color: '#fff', weight: 2.5, fillColor: '#22aa44', fillOpacity: 1
+    }).bindTooltip('Start').addTo(map);
+
+    L.circleMarker(d.end, {
+      radius: 9, color: '#fff', weight: 2.5, fillColor: '#cc3322', fillOpacity: 1
+    }).bindTooltip('Finish').addTo(map);
+
+    (d.mid || []).forEach(function(pt) {
+      L.circleMarker(pt, {
+        radius: 6, color: '#fff', weight: 2, fillColor: '#3388ff', fillOpacity: 1
+      }).addTo(map);
+    });
+
+    var locMarker = null, locCircle = null, locActive = false;
+    function toggleLocate() {
+      if (locActive) {
+        if (locMarker) { locMarker.remove(); locMarker = null; }
+        if (locCircle) { locCircle.remove(); locCircle = null; }
+        locActive = false;
+        document.querySelector('.locate-btn').classList.remove('active');
+      } else {
+        map.locate({ maxZoom: 16 });
+      }
+    }
+    map.on('locationfound', function(e) {
+      locActive = true;
+      document.querySelector('.locate-btn').classList.add('active');
+      if (locMarker) locMarker.remove();
+      if (locCircle) locCircle.remove();
+      locCircle = L.circle(e.latlng, {
+        radius: e.accuracy / 2, weight: 1, color: '#3388ff', fillColor: '#3388ff', fillOpacity: 0.1
+      }).addTo(map);
+      locMarker = L.circleMarker(e.latlng, {
+        radius: 7, color: '#fff', weight: 2, fillColor: '#3388ff', fillOpacity: 1
+      }).addTo(map);
+    });
+    map.on('locationerror', function(e) {
+      alert('Location unavailable: ' + e.message);
+      document.querySelector('.locate-btn').classList.remove('active');
+    });
+  </script>
+</body>
+</html>
