@@ -1,4 +1,4 @@
-package heatmap
+package geom
 
 import (
 	"math"
@@ -10,7 +10,6 @@ const testEps = 1e-9
 // ── segDistM ─────────────────────────────────────────────────────────────────
 
 func TestSegDistM(t *testing.T) {
-	// lonToM = latToM = 1 so coordinates are treated as metres directly.
 	const m = 1.0
 	tests := []struct {
 		name     string
@@ -78,16 +77,8 @@ func TestSegDistM(t *testing.T) {
 // ── pointInRing ──────────────────────────────────────────────────────────────
 
 func TestPointInRing(t *testing.T) {
-	// Unit square (CCW winding): corners at (0,0), (1,0), (1,1), (0,1).
 	square := [][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}}
 
-	// L-shape: a 2×2 square with the top-right quadrant removed.
-	//
-	//  (0,2)──(1,2)
-	//    │      │
-	//  (0,1)  (1,1)──(2,1)
-	//    │              │
-	//  (0,0)────────(2,0)
 	lShape := [][2]float64{{0, 0}, {2, 0}, {2, 1}, {1, 1}, {1, 2}, {0, 2}}
 
 	tests := []struct {
@@ -118,65 +109,29 @@ func TestPointInRing(t *testing.T) {
 	}
 }
 
-// ── ringAreaSqM ──────────────────────────────────────────────────────────────
+// ── Parse ─────────────────────────────────────────────────────────────────────
 
-func TestRingAreaSqM(t *testing.T) {
-	const m = 1.0
-	tests := []struct {
-		name string
-		ring [][2]float64
-		want float64
-	}{
-		{
-			"unit square",
-			[][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
-			1.0,
-		},
-		{
-			"right triangle with legs 3 and 4",
-			[][2]float64{{0, 0}, {3, 0}, {0, 4}},
-			6.0,
-		},
-		{
-			"degenerate: fewer than 3 points",
-			[][2]float64{{0, 0}, {1, 0}},
-			0,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ringAreaSqM(tc.ring, m, m)
-			if math.Abs(got-tc.want) > testEps {
-				t.Errorf("got %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// ── parseGeom ────────────────────────────────────────────────────────────────
-
-func TestParseGeom(t *testing.T) {
+func TestParse(t *testing.T) {
 	t.Run("nil on empty input", func(t *testing.T) {
-		if parseGeom(nil) != nil {
+		if Parse(nil) != nil {
 			t.Error("expected nil")
 		}
 	})
 
 	t.Run("nil on invalid JSON", func(t *testing.T) {
-		if parseGeom([]byte("not-json")) != nil {
+		if Parse([]byte("not-json")) != nil {
 			t.Error("expected nil")
 		}
 	})
 
 	t.Run("nil on unknown type", func(t *testing.T) {
-		if parseGeom([]byte(`{"type":"Donut","coordinates":[]}`)) != nil {
+		if Parse([]byte(`{"type":"Donut","coordinates":[]}`)) != nil {
 			t.Error("expected nil")
 		}
 	})
 
 	t.Run("Point", func(t *testing.T) {
-		g := parseGeom([]byte(`{"type":"Point","coordinates":[1.5,2.5]}`))
+		g := Parse([]byte(`{"type":"Point","coordinates":[1.5,2.5]}`))
 		p, ok := g.(pointGeom)
 		if !ok {
 			t.Fatalf("expected pointGeom, got %T", g)
@@ -187,7 +142,7 @@ func TestParseGeom(t *testing.T) {
 	})
 
 	t.Run("LineString", func(t *testing.T) {
-		g := parseGeom([]byte(`{"type":"LineString","coordinates":[[0,0],[1,1],[2,0]]}`))
+		g := Parse([]byte(`{"type":"LineString","coordinates":[[0,0],[1,1],[2,0]]}`))
 		l, ok := g.(lineGeom)
 		if !ok {
 			t.Fatalf("expected lineGeom, got %T", g)
@@ -198,7 +153,7 @@ func TestParseGeom(t *testing.T) {
 	})
 
 	t.Run("MultiLineString", func(t *testing.T) {
-		g := parseGeom([]byte(`{"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[2,2],[3,3]]]}`))
+		g := Parse([]byte(`{"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[2,2],[3,3]]]}`))
 		mg, ok := g.(multiGeom)
 		if !ok {
 			t.Fatalf("expected multiGeom, got %T", g)
@@ -209,21 +164,21 @@ func TestParseGeom(t *testing.T) {
 	})
 
 	t.Run("Polygon", func(t *testing.T) {
-		g := parseGeom([]byte(`{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}`))
+		g := Parse([]byte(`{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}`))
 		if _, ok := g.(polyGeom); !ok {
 			t.Fatalf("expected polyGeom, got %T", g)
 		}
 	})
 
 	t.Run("MultiPolygon", func(t *testing.T) {
-		g := parseGeom([]byte(`{"type":"MultiPolygon","coordinates":[[[[0,0],[1,0],[1,1],[0,0]]]]}`))
+		g := Parse([]byte(`{"type":"MultiPolygon","coordinates":[[[[0,0],[1,0],[1,1],[0,0]]]]}`))
 		if _, ok := g.(multiPolyGeom); !ok {
 			t.Fatalf("expected multiPolyGeom, got %T", g)
 		}
 	})
 
 	t.Run("GeometryCollection with two members", func(t *testing.T) {
-		g := parseGeom([]byte(`{
+		g := Parse([]byte(`{
 			"type": "GeometryCollection",
 			"geometries": [
 				{"type": "Point", "coordinates": [0, 0]},
@@ -252,23 +207,23 @@ func TestPointGeom(t *testing.T) {
 	const m = 1.0
 	p := pointGeom([2]float64{0, 0})
 
-	t.Run("distM to itself is 0", func(t *testing.T) {
-		if d := p.distM(0, 0, m, m); d != 0 {
+	t.Run("DistM to itself is 0", func(t *testing.T) {
+		if d := p.DistM(0, 0, m, m); d != 0 {
 			t.Errorf("got %v, want 0", d)
 		}
 	})
 
-	t.Run("distM 3-4-5 triangle", func(t *testing.T) {
-		got := p.distM(3, 4, m, m)
+	t.Run("DistM 3-4-5 triangle", func(t *testing.T) {
+		got := p.DistM(3, 4, m, m)
 		if math.Abs(got-5) > testEps {
 			t.Errorf("got %v, want 5", got)
 		}
 	})
 
-	t.Run("bbox is a degenerate point", func(t *testing.T) {
+	t.Run("BBox is a degenerate point", func(t *testing.T) {
 		q := pointGeom([2]float64{1.5, 2.5})
 		want := [4]float64{1.5, 2.5, 1.5, 2.5}
-		if b := q.bbox(); b != want {
+		if b := q.BBox(); b != want {
 			t.Errorf("got %v, want %v", b, want)
 		}
 	})
@@ -279,44 +234,34 @@ func TestPointGeom(t *testing.T) {
 func TestLineGeom(t *testing.T) {
 	const m = 1.0
 
-	t.Run("distM perpendicular to middle of segment", func(t *testing.T) {
+	t.Run("DistM perpendicular to middle of segment", func(t *testing.T) {
 		line := lineGeom{{0, 0}, {4, 0}}
-		got := line.distM(2, 3, m, m)
+		got := line.DistM(2, 3, m, m)
 		if math.Abs(got-3) > testEps {
 			t.Errorf("got %v, want 3", got)
 		}
 	})
 
-	t.Run("distM point on segment returns 0", func(t *testing.T) {
+	t.Run("DistM point on segment returns 0", func(t *testing.T) {
 		line := lineGeom{{0, 0}, {4, 0}}
-		got := line.distM(2, 0, m, m)
+		got := line.DistM(2, 0, m, m)
 		if got > testEps {
 			t.Errorf("got %v, want 0", got)
 		}
 	})
 
-	t.Run("distM multi-segment picks minimum", func(t *testing.T) {
-		// Polyline: (0,0)→(2,0)→(2,2). Point at (3,1): 1m from second segment.
+	t.Run("DistM multi-segment picks minimum", func(t *testing.T) {
 		line := lineGeom{{0, 0}, {2, 0}, {2, 2}}
-		got := line.distM(3, 1, m, m)
+		got := line.DistM(3, 1, m, m)
 		if math.Abs(got-1) > testEps {
 			t.Errorf("got %v, want 1", got)
 		}
 	})
 
-	t.Run("areaSqM is length × 3", func(t *testing.T) {
-		// Segment of length 3: areaSqM = 3 * 3 = 9.
-		line := lineGeom{{0, 0}, {3, 0}}
-		got := line.areaSqM(m, m)
-		if math.Abs(got-9) > testEps {
-			t.Errorf("got %v, want 9", got)
-		}
-	})
-
-	t.Run("bbox across mixed coordinates", func(t *testing.T) {
+	t.Run("BBox across mixed coordinates", func(t *testing.T) {
 		line := lineGeom{{0, 1}, {2, 3}, {-1, 4}, {5, -2}}
 		want := [4]float64{-1, -2, 5, 4}
-		if b := line.bbox(); b != want {
+		if b := line.BBox(); b != want {
 			t.Errorf("got %v, want %v", b, want)
 		}
 	})
@@ -326,18 +271,16 @@ func TestLineGeom(t *testing.T) {
 
 func TestPolyGeomDistM(t *testing.T) {
 	const m = 1.0
-	// Unit square as the outer ring.
 	square := polyGeom{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}}
 
 	t.Run("point inside returns 0", func(t *testing.T) {
-		if d := square.distM(0.5, 0.5, m, m); d != 0 {
+		if d := square.DistM(0.5, 0.5, m, m); d != 0 {
 			t.Errorf("got %v, want 0", d)
 		}
 	})
 
 	t.Run("point outside returns distance to nearest edge", func(t *testing.T) {
-		// (1.5, 0.5) is 0.5m from the right edge.
-		got := square.distM(1.5, 0.5, m, m)
+		got := square.DistM(1.5, 0.5, m, m)
 		if math.Abs(got-0.5) > testEps {
 			t.Errorf("got %v, want 0.5", got)
 		}
@@ -345,7 +288,7 @@ func TestPolyGeomDistM(t *testing.T) {
 
 	t.Run("empty polygon returns MaxFloat64", func(t *testing.T) {
 		empty := polyGeom{}
-		if d := empty.distM(0, 0, m, m); d != math.MaxFloat64 {
+		if d := empty.DistM(0, 0, m, m); d != math.MaxFloat64 {
 			t.Errorf("got %v, want MaxFloat64", d)
 		}
 	})
@@ -355,26 +298,25 @@ func TestPolyGeomDistM(t *testing.T) {
 
 func TestMultiPolyGeomDistM(t *testing.T) {
 	const m = 1.0
-	// Two disjoint unit squares: x ∈ [0,1] and x ∈ [3,4].
 	mp := multiPolyGeom{
 		{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}},
 		{{{3, 0}, {4, 0}, {4, 1}, {3, 1}}},
 	}
 
 	t.Run("inside first polygon", func(t *testing.T) {
-		if d := mp.distM(0.5, 0.5, m, m); d != 0 {
+		if d := mp.DistM(0.5, 0.5, m, m); d != 0 {
 			t.Errorf("got %v, want 0", d)
 		}
 	})
 
 	t.Run("inside second polygon", func(t *testing.T) {
-		if d := mp.distM(3.5, 0.5, m, m); d != 0 {
+		if d := mp.DistM(3.5, 0.5, m, m); d != 0 {
 			t.Errorf("got %v, want 0", d)
 		}
 	})
 
 	t.Run("midpoint between polygons: distance 1 to each", func(t *testing.T) {
-		got := mp.distM(2, 0.5, m, m)
+		got := mp.DistM(2, 0.5, m, m)
 		if math.Abs(got-1) > testEps {
 			t.Errorf("got %v, want 1", got)
 		}
@@ -386,7 +328,7 @@ func TestMultiPolyGeomBbox(t *testing.T) {
 		{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}},
 		{{{3, -1}, {4, 0}, {4, 1}, {3, 1}}},
 	}
-	got := mp.bbox()
+	got := mp.BBox()
 	want := [4]float64{0, -1, 4, 1}
 	if got != want {
 		t.Errorf("got %v, want %v", got, want)

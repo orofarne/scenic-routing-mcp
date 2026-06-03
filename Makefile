@@ -25,8 +25,9 @@ lint:
 	golangci-lint run ./...
 
 # Run all unit tests.
+# Use -short to skip doc-generation tests (e.g. TestKernelComparison).
 test:
-	go test ./...
+	go test -short ./...
 
 # Show per-function test coverage across all packages.
 cover:

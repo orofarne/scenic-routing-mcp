@@ -9,3 +9,4 @@ linters:
       # Fixing these three call sites structurally would add noise with no safety benefit.
       exclude-functions:
         - (io.ReadCloser).Close
+        - (*os.File).Close

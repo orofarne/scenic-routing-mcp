@@ -1,19 +1,14 @@
-package heatmap
+package geom
 
 import (
 	"encoding/json"
 	"math"
 )
 
-// geomType abstracts all GeoJSON geometry variants for distance and area queries.
-type geomType interface {
-	// distM returns the distance in metres from (lon, lat) to the nearest point
-	// on the geometry. Returns 0 if the point lies inside a polygon.
-	distM(lon, lat, lonToM, latToM float64) float64
-	// areaSqM returns an approximate area in m² used for weight and σ computation.
-	areaSqM(lonToM, latToM float64) float64
-	// bbox returns [minLon, minLat, maxLon, maxLat].
-	bbox() [4]float64
+// Geom abstracts all GeoJSON geometry variants for distance and bounds queries.
+type Geom interface {
+	DistM(lon, lat, lonToM, latToM float64) float64
+	BBox() [4]float64
 }
 
 type rawGeom struct {
@@ -22,7 +17,8 @@ type rawGeom struct {
 	Geometries  []rawGeom       `json:"geometries"`
 }
 
-func parseGeom(data []byte) geomType {
+// Parse parses GeoJSON geometry bytes and returns a Geom, or nil on error.
+func Parse(data []byte) Geom {
 	if len(data) == 0 {
 		return nil
 	}
@@ -30,10 +26,10 @@ func parseGeom(data []byte) geomType {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
-	return buildGeom(raw)
+	return build(raw)
 }
 
-func buildGeom(raw rawGeom) geomType {
+func build(raw rawGeom) Geom {
 	switch raw.Type {
 	case "Point":
 		var c [2]float64
@@ -72,7 +68,7 @@ func buildGeom(raw rawGeom) geomType {
 	case "GeometryCollection":
 		mg := make(multiGeom, 0, len(raw.Geometries))
 		for _, g := range raw.Geometries {
-			if built := buildGeom(g); built != nil {
+			if built := build(g); built != nil {
 				mg = append(mg, built)
 			}
 		}
@@ -85,19 +81,18 @@ func buildGeom(raw rawGeom) geomType {
 
 type pointGeom [2]float64 // [lon, lat]
 
-func (p pointGeom) distM(lon, lat, lonToM, latToM float64) float64 {
+func (p pointGeom) DistM(lon, lat, lonToM, latToM float64) float64 {
 	dx := (lon - p[0]) * lonToM
 	dy := (lat - p[1]) * latToM
 	return math.Sqrt(dx*dx + dy*dy)
 }
-func (p pointGeom) areaSqM(_, _ float64) float64 { return math.Pi * 5 * 5 } // nominal 5 m radius
-func (p pointGeom) bbox() [4]float64              { return [4]float64{p[0], p[1], p[0], p[1]} }
+func (p pointGeom) BBox() [4]float64 { return [4]float64{p[0], p[1], p[0], p[1]} }
 
 // ── lineGeom ───────────────────────────────────────────────────────────────
 
 type lineGeom [][2]float64
 
-func (l lineGeom) distM(lon, lat, lonToM, latToM float64) float64 {
+func (l lineGeom) DistM(lon, lat, lonToM, latToM float64) float64 {
 	min := math.MaxFloat64
 	for i := 1; i < len(l); i++ {
 		if d := segDistM(lon, lat, l[i-1], l[i], lonToM, latToM); d < min {
@@ -106,16 +101,7 @@ func (l lineGeom) distM(lon, lat, lonToM, latToM float64) float64 {
 	}
 	return min
 }
-func (l lineGeom) areaSqM(lonToM, latToM float64) float64 {
-	total := 0.0
-	for i := 1; i < len(l); i++ {
-		dx := (l[i][0] - l[i-1][0]) * lonToM
-		dy := (l[i][1] - l[i-1][1]) * latToM
-		total += math.Sqrt(dx*dx + dy*dy)
-	}
-	return total * 3 // 3 m effective buffer width
-}
-func (l lineGeom) bbox() [4]float64 {
+func (l lineGeom) BBox() [4]float64 {
 	if len(l) == 0 {
 		return [4]float64{}
 	}
@@ -141,55 +127,42 @@ func (l lineGeom) bbox() [4]float64 {
 
 type polyGeom [][][2]float64 // [ring][point]
 
-func (pg polyGeom) distM(lon, lat, lonToM, latToM float64) float64 {
+func (pg polyGeom) DistM(lon, lat, lonToM, latToM float64) float64 {
 	if len(pg) == 0 {
 		return math.MaxFloat64
 	}
 	if pointInRing(lon, lat, pg[0]) {
 		return 0
 	}
-	return lineGeom(pg[0]).distM(lon, lat, lonToM, latToM)
+	return lineGeom(pg[0]).DistM(lon, lat, lonToM, latToM)
 }
-func (pg polyGeom) areaSqM(lonToM, latToM float64) float64 {
-	if len(pg) == 0 {
-		return 0
-	}
-	return ringAreaSqM(pg[0], lonToM, latToM)
-}
-func (pg polyGeom) bbox() [4]float64 {
+func (pg polyGeom) BBox() [4]float64 {
 	if len(pg) == 0 {
 		return [4]float64{}
 	}
-	return lineGeom(pg[0]).bbox()
+	return lineGeom(pg[0]).BBox()
 }
 
 // ── multiPolyGeom ──────────────────────────────────────────────────────────
 
 type multiPolyGeom [][][][2]float64
 
-func (mp multiPolyGeom) distM(lon, lat, lonToM, latToM float64) float64 {
+func (mp multiPolyGeom) DistM(lon, lat, lonToM, latToM float64) float64 {
 	min := math.MaxFloat64
 	for _, p := range mp {
-		if d := polyGeom(p).distM(lon, lat, lonToM, latToM); d < min {
+		if d := polyGeom(p).DistM(lon, lat, lonToM, latToM); d < min {
 			min = d
 		}
 	}
 	return min
 }
-func (mp multiPolyGeom) areaSqM(lonToM, latToM float64) float64 {
-	total := 0.0
-	for _, p := range mp {
-		total += polyGeom(p).areaSqM(lonToM, latToM)
-	}
-	return total
-}
-func (mp multiPolyGeom) bbox() [4]float64 {
+func (mp multiPolyGeom) BBox() [4]float64 {
 	if len(mp) == 0 {
 		return [4]float64{}
 	}
-	b := polyGeom(mp[0]).bbox()
+	b := polyGeom(mp[0]).BBox()
 	for _, p := range mp[1:] {
-		pb := polyGeom(p).bbox()
+		pb := polyGeom(p).BBox()
 		if pb[0] < b[0] {
 			b[0] = pb[0]
 		}
@@ -208,31 +181,24 @@ func (mp multiPolyGeom) bbox() [4]float64 {
 
 // ── multiGeom (collection) ─────────────────────────────────────────────────
 
-type multiGeom []geomType
+type multiGeom []Geom
 
-func (mg multiGeom) distM(lon, lat, lonToM, latToM float64) float64 {
+func (mg multiGeom) DistM(lon, lat, lonToM, latToM float64) float64 {
 	min := math.MaxFloat64
 	for _, g := range mg {
-		if d := g.distM(lon, lat, lonToM, latToM); d < min {
+		if d := g.DistM(lon, lat, lonToM, latToM); d < min {
 			min = d
 		}
 	}
 	return min
 }
-func (mg multiGeom) areaSqM(lonToM, latToM float64) float64 {
-	total := 0.0
-	for _, g := range mg {
-		total += g.areaSqM(lonToM, latToM)
-	}
-	return total
-}
-func (mg multiGeom) bbox() [4]float64 {
+func (mg multiGeom) BBox() [4]float64 {
 	if len(mg) == 0 {
 		return [4]float64{}
 	}
-	b := mg[0].bbox()
+	b := mg[0].BBox()
 	for _, g := range mg[1:] {
-		gb := g.bbox()
+		gb := g.BBox()
 		if gb[0] < b[0] {
 			b[0] = gb[0]
 		}
@@ -284,21 +250,4 @@ func pointInRing(lon, lat float64, ring [][2]float64) bool {
 		}
 	}
 	return inside
-}
-
-// ringAreaSqM computes the area of a ring in m² via the Shoelace formula.
-func ringAreaSqM(ring [][2]float64, lonToM, latToM float64) float64 {
-	n := len(ring)
-	if n < 3 {
-		return 0
-	}
-	area := 0.0
-	for i, j := 0, n-1; i < n; j, i = i, i+1 {
-		xi := ring[i][0] * lonToM
-		yi := ring[i][1] * latToM
-		xj := ring[j][0] * lonToM
-		yj := ring[j][1] * latToM
-		area += xj*yi - xi*yj
-	}
-	return math.Abs(area) / 2
 }

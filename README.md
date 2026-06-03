@@ -15,6 +15,8 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server for scenic p
 
 ## Architecture
 
+For a detailed description of the routing algorithm, see [docs/algorithm.md](docs/algorithm.md).
+
 ```
 LLM (Claude)
     │  MCP / Streamable HTTP  (port 8080)
@@ -337,6 +339,10 @@ http://localhost:8081/#pts=51.4633,-0.3011;51.4822,-0.1447&q=river+Thames+water&
 ```
 
 ## Development
+
+### Documentation images
+
+Comparison images in `docs/img/` are committed and must be regenerated manually after changing the heatmap algorithm. See [`docs/images.md`](docs/images.md) for details.
 
 ### Rebuild a single service without touching others
 

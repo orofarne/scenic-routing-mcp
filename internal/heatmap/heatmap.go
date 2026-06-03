@@ -20,6 +20,7 @@ import (
 	"sort"
 
 	"github.com/orofarne/scenic-routing-mcp/internal/geodata"
+	"github.com/orofarne/scenic-routing-mcp/internal/geom"
 )
 
 const (
@@ -99,8 +100,8 @@ func Compute(features []geodata.Feature, minLon, minLat, maxLon, maxLat float64,
 		if len(f.Geom) == 0 {
 			continue
 		}
-		geom := parseGeom(f.Geom)
-		if geom == nil {
+		feat := geom.Parse(f.Geom)
+		if feat == nil {
 			continue
 		}
 
@@ -112,7 +113,7 @@ func Compute(features []geodata.Feature, minLon, minLat, maxLon, maxLat float64,
 		cutoffLon := cutoffM / lonToM
 		cutoffLat := cutoffM / latToM
 
-		fb := geom.bbox()
+		fb := feat.BBox()
 		x0 := clampInt(g.lonToX(fb[0]-cutoffLon), 0, width-1)
 		x1 := clampInt(g.lonToX(fb[2]+cutoffLon), 0, width-1)
 		y0 := clampInt(g.latToY(fb[3]+cutoffLat), 0, height-1)
@@ -122,7 +123,7 @@ func Compute(features []geodata.Feature, minLon, minLat, maxLon, maxLat float64,
 			lat := maxLat - (float64(y)+0.5)*cellLat
 			for x := x0; x <= x1; x++ {
 				lon := minLon + (float64(x)+0.5)*cellLon
-				dM := geom.distM(lon, lat, lonToM, latToM)
+				dM := feat.DistM(lon, lat, lonToM, latToM)
 				if dM >= cutoffM {
 					continue
 				}
