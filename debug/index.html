@@ -268,6 +268,11 @@ details[open].section > summary::before { content: '▾'; }
               <input type="number" id="min-similarity" placeholder="auto" step="0.05" min="0" max="1">
               <div class="hint">0–1, blank = auto</div>
             </div>
+            <div class="field">
+              <label>Min heat score</label>
+              <input type="number" id="min-heat-score" placeholder="0.4" step="0.05" min="0" max="1">
+              <div class="hint">0–1; raise to force peak waypoints</div>
+            </div>
           </div>
         </div>
       </details>
@@ -967,6 +972,7 @@ async function planRoute() {
   if (poiName)    args.poi_name_query = poiName;
 
   const minSim = numVal('min-similarity');     if (minSim !== null)  args.min_similarity      = minSim;
+  const mhs    = numVal('min-heat-score');    if (mhs    !== null)  args.min_heat_score      = mhs;
   const wf     = numVal('walkway-factor');     if (wf     !== null)  args.walkway_factor      = wf;
   const pf     = numVal('path-factor');        if (pf     !== null)  args.path_factor         = pf;
   const ut     = numVal('use-tracks');         if (ut     !== null)  args.use_tracks          = ut;
@@ -1064,7 +1070,7 @@ document.getElementById('poi-query').addEventListener('keydown', e => {
 
 const FORM_FIELDS = [
   'poi-query','poi-include','poi-exclude','poi-name-query',
-  'max-detour','min-similarity',
+  'max-detour','min-similarity','min-heat-score',
   'walkway-factor','path-factor','use-tracks','use-living',
   'use-hills','step-penalty','use-ferry','max-hiking',
 ];
@@ -1096,6 +1102,7 @@ const HASH_FIELDS = {
   'nq':  'poi-name-query',
   'det': 'max-detour',
   'sim': 'min-similarity',
+  'mhs': 'min-heat-score',
   'wf':  'walkway-factor',
   'pf':  'path-factor',
   'ut':  'use-tracks',

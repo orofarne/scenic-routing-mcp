@@ -152,8 +152,11 @@ poi_query        string              semantic description: "Victorian docks cana
 poi_include      {key: value}        exact OSM tag filter: {"leisure": "park"}
 poi_exclude      {key: value}        exclusion filter: {"access": "private"}
 poi_name_query   string              fuzzy name match: "Thames"
-max_detour_ratio number              default 1.5 (scenic route ≤ 1.5× direct distance)
-min_similarity   number              minimum cosine similarity threshold for POI features
+max_detour_ratio number   default 1.5   scenic route ≤ 1.5× direct distance
+min_similarity   number               minimum cosine similarity threshold for POI features
+min_heat_score   number   default 0.4  if the heatmap route scores below this threshold, the
+                                       algorithm adds explicit peak waypoints; raise to 0.6–0.8
+                                       to force waypoints more aggressively
 ```
 
 At least one of `poi_query`, `poi_include`, or `poi_name_query` is required.

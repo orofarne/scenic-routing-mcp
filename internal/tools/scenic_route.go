@@ -41,6 +41,9 @@ poi_name_query: fuzzy substring search over OSM name/description tags (pg_trgm);
   Example: "Thames", "Regent's Park", "Grand Union Canal".
 max_detour_ratio: maximum allowed length as a multiple of the direct distance (default 1.5).
 min_similarity: minimum similarity threshold for heatmap POIs (default depends on active signals).
+min_heat_score: 0–1 minimum average heatmap score the route must achieve before the algorithm
+  tries adding explicit peak waypoints (default 0.4). Raise to 0.6–0.8 to force waypoints more
+  aggressively; lower to 0.1 to rely almost entirely on the heatmap edge discount.
 
 Valhalla pedestrian costing options (all optional):
 walkway_factor: 0.1–10; lower values prefer dedicated footpaths over roads (default 0.75).

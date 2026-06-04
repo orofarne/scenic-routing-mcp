@@ -38,6 +38,11 @@ type Params struct {
 	MaxDetourRatio float64 `json:"max_detour_ratio,omitempty"`
 	// MinSimilarity is the minimum cosine similarity threshold for POI features.
 	MinSimilarity float64 `json:"min_similarity,omitempty"`
+	// MinHeatScore is the minimum average heatmap score (0–1) a no-peak scenic
+	// route must achieve before peak waypoints are added. Lower values mean the
+	// algorithm tries peaks less often; higher values trigger peaks more readily.
+	// Default 0.4.
+	MinHeatScore float64 `json:"min_heat_score,omitempty"`
 
 	// Valhalla pedestrian costing options (all optional; 0 = use default).
 	WalkwayFactor       float64 `json:"walkway_factor,omitempty"`
@@ -67,9 +72,8 @@ const (
 	// At 1.0 the maximum discount per edge is 10× (factor clamped to 0.1).
 	scenicWeight = 1.0
 
-	// routeHeatThreshold is the minimum average normalised heat score a scenic
-	// route must achieve before we consider adding explicit peak waypoints.
-	routeHeatThreshold = 0.20
+	// defaultHeatThreshold is the default value for Params.MinHeatScore.
+	defaultHeatThreshold = 0.40
 
 	// bboxExpandM is the buffer added on each side of the route bbox.
 	// 1500 m gives a generous corridor for heatmap POI discovery.
@@ -137,9 +141,14 @@ func Plan(ctx context.Context, p Params, geo *geodata.Client, val *valhalla.Clie
 		"length_km", scenicRoute.Trip.Summary.Length,
 		"duration_ms", time.Since(t0).Milliseconds())
 
+	heatThreshold := p.MinHeatScore
+	if heatThreshold == 0 {
+		heatThreshold = defaultHeatThreshold
+	}
+
 	var peaks []heatmap.Peak
 	var usedPeaks []heatmap.Peak
-	if noPeakScore < routeHeatThreshold {
+	if noPeakScore < heatThreshold {
 		t0 = time.Now()
 		peaks = heatGrid.Peaks(10)
 		slog.DebugContext(ctx, "heatmap peaks", "count", len(peaks), "duration_ms", time.Since(t0).Milliseconds())
@@ -197,7 +206,7 @@ func Plan(ctx context.Context, p Params, geo *geodata.Client, val *valhalla.Clie
 					cur[i] = peaks[idx]
 				}
 				usedPeaks = cur
-				if score >= routeHeatThreshold {
+				if score >= heatThreshold {
 					break
 				}
 			}
