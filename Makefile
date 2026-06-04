@@ -6,7 +6,7 @@ VALHALLA_VERSION      := 3.7.0
 PRIME_SERVER_VERSION  := 0.10.0
 VALHALLA_BASE_IMG     := scenic-routing-mcp/valhalla-base:$(VALHALLA_VERSION)
 
-.PHONY: dictionary lint test cover check valhalla-base up down clean
+.PHONY: dictionary lint test cover check screenshots valhalla-base up down clean
 
 # Rebuild the OSM tag description dictionary from taginfo + OSM Wiki.
 # Output is written to $(DICTIONARY); rows with empty descriptions need manual review.
@@ -33,6 +33,19 @@ test:
 cover:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
+
+# Generate map-tile screenshots for docs/algorithm.md §1.
+# Requires the full stack running (make up) and internet access for map tiles.
+# Tile URL and attribution are read from .env (MAP_TILES_URL / MAP_TILES_ATTR).
+screenshots:
+	@set -e; \
+	if [ -f .env ]; then \
+	  while IFS= read -r _l || [ -n "$$_l" ]; do \
+	    case "$$_l" in ''|\#*) continue;; esac; \
+	    export "$${_l%%=*}=$${_l#*=}"; \
+	  done < .env; \
+	fi; \
+	go test ./docs/gen/ -run TestRoutingApproaches -v -timeout 10m
 
 # Run lint and tests together.
 check: lint test

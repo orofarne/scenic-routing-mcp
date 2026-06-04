@@ -21,10 +21,9 @@ Four approaches in increasing order of complexity.
 
 Standard Dijkstra / A\* minimising edge cost with no awareness of surroundings.
 
-```
-Start ──────────────────────── End
-         (shortest path)
-```
+![Baseline: Yerevan, Hrazdan river area](img/approach_baseline_yerevan.png)
+
+![Baseline: London, Richmond → Battersea](img/approach_baseline_london.png)
 
 **Pros:** fast, reliable.  
 **Cons:** routes follow busy roads, ignoring riverside paths and parks.
@@ -32,6 +31,10 @@ Start ──────────────────────── E
 ### 1.2 Intermediate Waypoints
 
 Idea: select a set of scenic features, build a graph over them, find the best path through the graph, then re-route through the chosen nodes via Valhalla to get a real road route.
+
+![Waypoints: Yerevan — orange circles = candidate peaks; filled = used](img/approach_waypoints_yerevan.png)
+
+![Waypoints: London — peaks along the Thames corridor](img/approach_waypoints_london.png)
 
 ```
 Start ──→ wp1 ──→ wp2 ──→ wp3 ──→ End
@@ -60,6 +63,10 @@ The full pipeline:
 
 Idea: build a continuous heat map over POI in the search area and feed it to Valhalla as an edge cost signal. Edges near high-heat zones cost less, so the router naturally gravitates toward scenic features without explicit waypoints.
 
+![Heat map: Yerevan — gray = baseline route, heatmap shows Hrazdan gorge and parks](img/approach_heatmap_yerevan.png)
+
+![Heat map: London — gray = baseline route, heatmap along the Thames](img/approach_heatmap_london.png)
+
 Compute heatmap over all POI in the bbox and feed it to Valhalla as `scenic_pedestrian`.  
 The router finds the cheapest path where edges near high-heat zones cost less.
 
@@ -69,6 +76,10 @@ The router finds the cheapest path where edges near high-heat zones cost less.
 ### 1.4 Current: Combined Approach
 
 Heat map + route quality score + explicit peak waypoints when needed.
+
+![Combined: Yerevan — heatmap + scenic route + orange waypoint peaks](img/approach_scenic_yerevan.png)
+
+![Combined: London — heatmap + scenic route following the Thames](img/approach_scenic_london.png)
 
 ```
                 ┌─ heatmap.Compute(POI, bbox) ───────────────┐
@@ -86,8 +97,8 @@ Full flow:
 2. **Heat map** — `heatmap.Compute(features, bbox)` builds a 50 m/cell grid.
 3. **Scenic route** — `RouteScenic` with the heat map and no explicit waypoints.
 4. **Quality score** — `ScoreRoute`: average normalised heat along the route sampled every 50 m.
-5. **Peaks** — if `score < routeHeatThreshold`, compute `heatGrid.Peaks(10)` and route through the subset with maximum total heat (TSP bitmask DP).
-6. **Iterations** — try [3, 6, 10] peaks; stop when `score ≥ routeHeatThreshold` or peaks exhausted.
+5. **Peaks** — if `score < min_heat_score` (default 0.4, API-configurable), compute `heatGrid.Peaks(10)` and route through the subset with maximum total heat (TSP bitmask DP).
+6. **Iterations** — try [3, 6, 10] peaks; stop when `score ≥ min_heat_score` or peaks exhausted.
 
 ---
 
@@ -330,7 +341,7 @@ func (g *Grid) ScoreRoute(coords [][2]float64) float64 {
 }
 ```
 
-`routeHeatThreshold = 0.20` — if the mean heat along the route is below 20%, the router is considered to have missed the hot zones.
+`min_heat_score` (default `0.4`, API-configurable via `Params.MinHeatScore`) — if the mean heat along the route is below this threshold, the router is considered to have missed the hot zones and explicit peak waypoints are added.
 
 ### 4.2 Peak Detection (`Peaks`)
 
@@ -444,7 +455,7 @@ Start ─── street ─── End   Start → riverside → Peak → riversid
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
-| `routeHeatThreshold` | 0.20 | minimum mean heat for a "successful" scenic route |
+| `defaultHeatThreshold` | 0.40 | default `min_heat_score`: threshold below which peaks are added |
 | `bboxExpandM` | 1500 m | POI search buffer around the route bbox |
 | `scenicWeight` | 1.0 | heat-map discount strength (min factor = 0.1) |
 | `peakFlatGini` | 0.50 | Gini below this → peaks not needed |
@@ -475,12 +486,19 @@ http://localhost:8081/#pts=51.4633,-0.3011;51.4822,-0.1447&q=river+Thames+water&
 ## Regenerating Images
 
 ```bash
-# All diagrams at once
+# Shortcut: all map screenshots at once (requires running stack + internet)
+make screenshots
+
+# All diagrams at once (synthetic only, no stack needed)
 go test ./docs/gen/ -v
 
 # Individual generators
-go test ./docs/gen/ -run TestKernelComparison -v  # §3 kernel comparisons
-go test ./docs/gen/ -run TestPeaksDiagram -v      # §4 peaks diagram
+go test ./docs/gen/ -run TestRoutingApproaches -v -timeout 10m  # §1 map screenshots
+go test ./docs/gen/ -run TestKernelComparison -v                # §3 kernel comparisons
+go test ./docs/gen/ -run TestPeaksDiagram -v                    # §4 peaks diagram
 ```
+
+`TestRoutingApproaches` reads tile URL and attribution from `.env` in the project root
+(`MAP_TILES_URL` / `MAP_TILES_ATTR`). Tiles are cached in `/tmp/scenic_tile_cache`.
 
 Output directories: `docs/img/kernel/`, `docs/img/`.
